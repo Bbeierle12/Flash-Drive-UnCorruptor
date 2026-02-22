@@ -1,0 +1,12 @@
+[package]
+name = "fdu-device-enum"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Cross-platform removable device enumeration for Flash Drive UnCorruptor"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

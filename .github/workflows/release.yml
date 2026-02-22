@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FDU_MOCK_ONLY: "true"
+
+jobs:
+  # ── Validate ───────────────────────────────────────────
+  validate:
+    name: validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "Tag version: $TAG"
+          echo "Cargo.toml version: $CARGO_VER"
+          if [ "$TAG" != "$CARGO_VER" ]; then
+            echo "::error::Tag v$TAG does not match Cargo.toml version $CARGO_VER"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+  # ── Full CI gate ───────────────────────────────────────
+  ci:
+    name: CI gate
+    needs: [validate]
+    uses: ./.github/workflows/ci.yml
+
+  # ── Build release binaries ─────────────────────────────
+  build-release:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    needs: [ci]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Frontend build (will be a no-op until Phase 3)
+      # - uses: actions/setup-node@v4
+      #   with:
+      #     node-version: 20
+      # - run: cd fdu-web/frontend && npm ci && npm run build
+
+      # Cross-compilation
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@cross
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --workspace --release --target ${{ matrix.target }}
+
+      # Native build
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+
+      # Package
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          VERSION="${{ needs.ci.outputs.version || github.ref_name }}"
+          STAGING="fdu-${VERSION}-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+          cp target/${{ matrix.target }}/release/fdu "$STAGING/"
+          cp README.md LICENSE "$STAGING/" 2>/dev/null || true
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          shasum -a 256 "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $staging = "fdu-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $staging
+          Copy-Item "target/${{ matrix.target }}/release/fdu.exe" "$staging/"
+          Copy-Item "README.md", "LICENSE" "$staging/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$staging/*" -DestinationPath "${staging}.zip"
+          (Get-FileHash "${staging}.zip" -Algorithm SHA256).Hash + "  ${staging}.zip" | Out-File "${staging}.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            fdu-*.tar.gz
+            fdu-*.zip
+            fdu-*.sha256
+          retention-days: 3
+
+  # ── Publish GitHub Release ─────────────────────────────
+  publish:
+    name: publish release
+    runs-on: ubuntu-latest
+    needs: [validate, build-release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Use git log if git-cliff is not available
+          if command -v git-cliff &> /dev/null; then
+            git cliff --latest --strip header > CHANGELOG_RELEASE.md
+          else
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changes since $PREV_TAG" > CHANGELOG_RELEASE.md
+              git log "$PREV_TAG"..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG_RELEASE.md
+            else
+              echo "## Initial Release" > CHANGELOG_RELEASE.md
+              git log --pretty=format:"- %s (%h)" >> CHANGELOG_RELEASE.md
+            fi
+          fi
+
+      - name: Combine checksums
+        run: cat artifacts/*.sha256 > artifacts/checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG_RELEASE.md
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/checksums.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+
+  # ── Publish to crates.io (optional) ────────────────────
+  publish-crate:
+    name: publish fdu-core
+    runs-on: ubuntu-latest
+    needs: [publish]
+    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta')"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish fdu-core
+        run: cargo publish -p fdu-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true  # Don't fail release if crate publish fails

@@ -1,0 +1,25 @@
+# Build artifacts
+/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# FDU-specific
+*.img
+*.bak
+
+# Test artifacts
+*.profraw
+
+# Frontend (Phase 3)
+node_modules/
+fdu-web/frontend/dist/

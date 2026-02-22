@@ -1,0 +1,26 @@
+[package]
+name = "fdu-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Web GUI server for Flash Drive UnCorruptor"
+
+[[bin]]
+name = "fdu-web"
+path = "src/main.rs"
+
+[dependencies]
+fdu-core = { path = "../fdu-core" }
+fdu-device-enum = { path = "../fdu-device-enum" }
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
