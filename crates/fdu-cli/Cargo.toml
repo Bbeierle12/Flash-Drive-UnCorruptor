@@ -11,8 +11,13 @@ name = "fdu"
 path = "src/main.rs"
 
 [dependencies]
-fdu-core = { path = "../fdu-core" }
-fdu-device-enum = { path = "../fdu-device-enum" }
+fdu-core = { workspace = true }
+fdu-device-enum = { workspace = true }
+fdu-models = { workspace = true }
+fdu-usb = { workspace = true }
+fdu-disk = { workspace = true }
+fdu-audit = { workspace = true }
+fdu-extract = { workspace = true }
 
 serde.workspace = true
 serde_json.workspace = true

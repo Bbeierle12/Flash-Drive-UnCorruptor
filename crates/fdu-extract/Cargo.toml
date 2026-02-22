@@ -1,0 +1,22 @@
+[package]
+name = "fdu-extract"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Quarantine-based safe file extraction for FDU"
+
+[dependencies]
+fdu-core = { workspace = true }
+fdu-models = { workspace = true }
+fdu-audit = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }

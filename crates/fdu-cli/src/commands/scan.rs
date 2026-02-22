@@ -115,7 +115,7 @@ pub fn run(device_path: &str, _deep: bool, json: bool) -> anyhow::Result<()> {
 }
 
 /// Open a device — handles both block devices and image files.
-fn open_device(_path: &str) -> anyhow::Result<Box<dyn Device>> {
+pub fn open_device(_path: &str) -> anyhow::Result<Box<dyn Device>> {
     #[cfg(target_os = "linux")]
     {
         use fdu_core::device::linux::LinuxDevice;

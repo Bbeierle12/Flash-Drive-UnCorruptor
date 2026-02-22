@@ -23,3 +23,7 @@ desktop.ini
 # Frontend (Phase 3)
 node_modules/
 fdu-web/frontend/dist/
+
+# Fuzz testing
+crates/fdu-fuzz/corpus/
+crates/fdu-fuzz/artifacts/

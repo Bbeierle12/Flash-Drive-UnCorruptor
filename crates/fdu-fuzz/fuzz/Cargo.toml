@@ -1,0 +1,49 @@
+[package]
+name = "fdu-fuzz-targets"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+fdu-core = { path = "../../fdu-core" }
+fdu-disk = { path = "../../fdu-disk" }
+fdu-usb = { path = "../../fdu-usb" }
+fdu-models = { path = "../../fdu-models" }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_fat32_bpb"
+path = "fuzz_targets/fuzz_fat32_bpb.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_detect_fs"
+path = "fuzz_targets/fuzz_detect_fs.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mbr"
+path = "fuzz_targets/fuzz_mbr.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_gpt"
+path = "fuzz_targets/fuzz_gpt.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_carving"
+path = "fuzz_targets/fuzz_carving.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_usb_descriptors"
+path = "fuzz_targets/fuzz_usb_descriptors.rs"
+doc = false

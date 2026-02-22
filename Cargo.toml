@@ -4,6 +4,12 @@ members = [
     "crates/fdu-cli",
     "crates/fdu-web",
     "crates/fdu-device-enum",
+    "crates/fdu-models",
+    "crates/fdu-usb",
+    "crates/fdu-disk",
+    "crates/fdu-audit",
+    "crates/fdu-extract",
+    # fdu-fuzz is NOT a workspace member (cargo-fuzz has its own build)
 ]
 resolver = "2"
 
@@ -12,7 +18,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Brandon Beierle <bbeierle21@gmail.com>"]
 license = "MIT"
-description = "Flash Drive UnCorruptor — First aid toolkit for flash drives"
+description = "Flash Drive UnCorruptor — USB security audit & recovery toolkit"
 
 [workspace.dependencies]
 # Serialization
@@ -32,3 +38,24 @@ tokio = { version = "1", features = ["full"] }
 
 # UUID
 uuid = { version = "1.0", features = ["serde", "v4"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Crypto / hashing
+sha2 = "0.10"
+
+# Temp files
+tempfile = "3"
+
+# USB
+nusb = "0.2"
+
+# Internal crates
+fdu-core = { path = "crates/fdu-core" }
+fdu-models = { path = "crates/fdu-models" }
+fdu-usb = { path = "crates/fdu-usb" }
+fdu-disk = { path = "crates/fdu-disk" }
+fdu-audit = { path = "crates/fdu-audit" }
+fdu-extract = { path = "crates/fdu-extract" }
+fdu-device-enum = { path = "crates/fdu-device-enum" }

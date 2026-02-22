@@ -1,0 +1,8 @@
+[package]
+name = "fdu-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Fuzz testing harnesses for FDU parsers"
+
+# NOT a workspace member — cargo-fuzz manages its own build

@@ -6,7 +6,11 @@
 //!   fdu diagnose <DEVICE> [--bad-sectors] [--json]
 //!   fdu recover <DEVICE> <OUTPUT> [--strategy both] [--file-types jpg,pdf]
 //!   fdu repair <DEVICE> --unsafe [--fix-fat] [--backup-first]
-//!   fdu web [--port 3000]
+//!   fdu audit <DEVICE> [--phase usb|disk] [--json]
+//!   fdu usb list | inspect <DEVICE>
+//!   fdu partitions <DEVICE> [--json]
+//!   fdu extract <DEVICE> <OUTPUT> [--policy verified-only]
+//!   fdu report <DEVICE> [--format json|text]
 
 mod commands;
 
@@ -16,10 +20,11 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "fdu",
     version,
-    about = "Flash Drive UnCorruptor — First aid toolkit for flash drives",
-    long_about = "Diagnose, recover, and repair corrupted USB flash drives.\n\n\
-                  Supports FAT32, exFAT, NTFS, ext4, and HFS+ filesystems.\n\
-                  Run 'fdu list' to see connected drives, then use scan/diagnose/recover."
+    about = "Flash Drive UnCorruptor — USB security audit & recovery toolkit",
+    long_about = "Diagnose, audit, recover, and repair USB flash drives.\n\n\
+                  Security-first: detect BadUSB attacks, malicious firmware,\n\
+                  suspicious partitions, and malware before trusting any data.\n\n\
+                  Run 'fdu list' to see connected drives, 'fdu audit <device>' for a full scan."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -32,6 +37,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    // ── Existing commands ──────────────────────────────────────────
+
     /// List all connected removable drives
     List {
         /// Output as JSON
@@ -113,6 +120,93 @@ enum Commands {
         #[arg(long, default_value = "true")]
         backup_first: bool,
     },
+
+    // ── New security commands ──────────────────────────────────────
+
+    /// Run a full security audit on a device
+    Audit {
+        /// Device path or disk image file
+        device: String,
+
+        /// Only run a specific scan phase (usb, disk, filesystem, content, forensics)
+        #[arg(long)]
+        phase: Option<String>,
+
+        /// Minimum severity to report (info, low, medium, high, critical)
+        #[arg(long, default_value = "info")]
+        min_severity: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// USB device inspection
+    Usb {
+        #[command(subcommand)]
+        action: UsbAction,
+    },
+
+    /// Show partition layout of a device
+    Partitions {
+        /// Device path or disk image file
+        device: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Safely extract files through quarantine
+    Extract {
+        /// Device path or disk image file
+        device: String,
+
+        /// Output directory for extracted files
+        output: String,
+
+        /// Extraction policy: verified-only, include-suspicious, forensic-full
+        #[arg(long, default_value = "verified-only")]
+        policy: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Generate a security report
+    Report {
+        /// Device path or disk image file
+        device: String,
+
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Write report to file instead of stdout
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum UsbAction {
+    /// List all USB devices with fingerprints
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Detailed USB descriptor inspection
+    Inspect {
+        /// Device identifier (VID:PID or path)
+        device: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -134,6 +228,7 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        // ── Existing commands ──────────────────────────────────────
         Commands::List {
             json,
             include_internal,
@@ -168,5 +263,33 @@ fn main() -> anyhow::Result<()> {
             remove_bad_chains,
             backup_first,
         ),
+
+        // ── New security commands ──────────────────────────────────
+        Commands::Audit {
+            device,
+            phase,
+            min_severity,
+            json,
+        } => commands::audit::run(&device, phase, &min_severity, json),
+
+        Commands::Usb { action } => match action {
+            UsbAction::List { json } => commands::usb::run_list(json),
+            UsbAction::Inspect { device, json } => commands::usb::run_inspect(&device, json),
+        },
+
+        Commands::Partitions { device, json } => commands::partitions::run(&device, json),
+
+        Commands::Extract {
+            device,
+            output,
+            policy,
+            json,
+        } => commands::extract::run(&device, &output, &policy, json),
+
+        Commands::Report {
+            device,
+            format,
+            output,
+        } => commands::report::run(&device, &format, output),
     }
 }
