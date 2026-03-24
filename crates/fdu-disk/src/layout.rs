@@ -261,7 +261,8 @@ mod tests {
 
         let gaps = find_gaps(&partitions, 1000);
         assert_eq!(gaps.len(), 3); // before first, between, after last
-        assert_eq!(gaps[0], (1, 99));
+        // first_usable is 34 (GPT heuristic: first partition >= 34)
+        assert_eq!(gaps[0], (34, 99));
         assert_eq!(gaps[1], (200, 299));
         assert_eq!(gaps[2], (500, 999));
     }

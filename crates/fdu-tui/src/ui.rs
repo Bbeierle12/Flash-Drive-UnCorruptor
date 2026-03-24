@@ -68,6 +68,7 @@ fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Dashboard => views::dashboard::draw(frame, app, area),
         Screen::Devices => views::devices::draw(frame, app, area),
         Screen::Scan => views::scan::draw(frame, app, area),
+        Screen::Repair => views::repair::draw(frame, app, area),
         Screen::Diagnose => views::diagnose::draw(frame, app, area),
         Screen::Audit => views::audit::draw(frame, app, area),
         Screen::Partitions => views::partitions::draw(frame, app, area),
@@ -86,7 +87,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let bar = Paragraph::new(Line::from(vec![
         Span::styled(" q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
         Span::raw(" Quit/Back  "),
-        Span::styled("0-8", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled("0-9", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" Navigate  "),
         Span::styled("↑↓/jk", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" Scroll  "),

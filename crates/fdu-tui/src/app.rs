@@ -32,6 +32,7 @@ pub enum Screen {
     Dashboard,
     Devices,
     Scan,
+    Repair,
     Diagnose,
     Audit,
     Partitions,
@@ -45,6 +46,7 @@ impl Screen {
         Screen::Dashboard,
         Screen::Devices,
         Screen::Scan,
+        Screen::Repair,
         Screen::Diagnose,
         Screen::Audit,
         Screen::Partitions,
@@ -58,6 +60,7 @@ impl Screen {
             Screen::Dashboard => "Dashboard",
             Screen::Devices => "Devices",
             Screen::Scan => "Scan",
+            Screen::Repair => "Repair",
             Screen::Diagnose => "Diagnose",
             Screen::Audit => "Audit",
             Screen::Partitions => "Partitions",
@@ -72,12 +75,13 @@ impl Screen {
             Screen::Dashboard => '0',
             Screen::Devices => '1',
             Screen::Scan => '2',
-            Screen::Diagnose => '3',
-            Screen::Audit => '4',
-            Screen::Partitions => '5',
-            Screen::Usb => '6',
-            Screen::Recover => '7',
-            Screen::Extract => '8',
+            Screen::Repair => '3',
+            Screen::Diagnose => '4',
+            Screen::Audit => '5',
+            Screen::Partitions => '6',
+            Screen::Usb => '7',
+            Screen::Recover => '8',
+            Screen::Extract => '9',
         }
     }
 }
@@ -125,6 +129,9 @@ pub struct App {
     // Scan
     pub scan_result: OpState<ValidationReport>,
 
+    // Repair
+    pub repair_result: OpState<String>,
+
     // Diagnose
     pub diagnose_result: OpState<DiagnosticReport>,
 
@@ -158,6 +165,7 @@ impl App {
             device_list_index: 0,
             selected_device: None,
             scan_result: OpState::Idle,
+            repair_result: OpState::Idle,
             diagnose_result: OpState::Idle,
             audit_result: OpState::Idle,
             partitions_result: OpState::Idle,
@@ -251,6 +259,7 @@ impl App {
             Screen::Dashboard => self.handle_dashboard_key(key),
             Screen::Devices => self.handle_devices_key(key),
             Screen::Scan => self.handle_scan_key(key),
+            Screen::Repair => self.handle_repair_key(key),
             Screen::Diagnose => self.handle_diagnose_key(key),
             Screen::Audit => self.handle_audit_key(key),
             Screen::Partitions => self.handle_partitions_key(key),
@@ -293,6 +302,13 @@ impl App {
     fn handle_scan_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter | KeyCode::Char('s') => self.run_scan(),
+            _ => {}
+        }
+    }
+
+    fn handle_repair_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('r') => self.run_repair(),
             _ => {}
         }
     }
@@ -438,6 +454,56 @@ impl App {
                 self.scan_result = OpState::Error(format!(
                     "Failed to open terminal (tried '{}'): {}. \
                      Run manually: fdu scan {:?}",
+                    terminal_cmd, e, path
+                ));
+            }
+        }
+    }
+
+    fn run_repair(&mut self) {
+        let path = match &self.selected_device {
+            Some(p) => p.clone(),
+            None => {
+                self.repair_result =
+                    OpState::Error("No device selected — go to Devices [1] and press Enter".into());
+                return;
+            }
+        };
+
+        let fdu_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("fdu")))
+            .unwrap_or_else(|| PathBuf::from("fdu"));
+
+        let terminal_cmd = find_terminal_emulator();
+        let child = std::process::Command::new(&terminal_cmd)
+            .args(terminal_exec_args(
+                &terminal_cmd,
+                &format!(
+                    "echo '=== Flash Drive UnCorruptor — REPAIR ===' && \
+                     echo && \
+                     echo 'WARNING: This will WRITE to the device.' && \
+                     echo 'Press Ctrl+C to cancel, or Enter to proceed...' && \
+                     read && \
+                     sudo {} repair {} --unsafe-mode; \
+                     echo && echo 'Press Enter to close...' && read",
+                    shell_escape(&fdu_bin.to_string_lossy()),
+                    shell_escape(&path),
+                ),
+            ))
+            .spawn();
+
+        match child {
+            Ok(_) => {
+                self.repair_result = OpState::Running(format!(
+                    "Repair running in external terminal for {}",
+                    path
+                ));
+            }
+            Err(e) => {
+                self.repair_result = OpState::Error(format!(
+                    "Failed to open terminal (tried '{}'): {}. \
+                     Run manually: sudo fdu repair {:?} --unsafe-mode",
                     terminal_cmd, e, path
                 ));
             }

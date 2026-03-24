@@ -5,5 +5,6 @@ pub mod diagnose;
 pub mod extract;
 pub mod partitions;
 pub mod recover;
+pub mod repair;
 pub mod scan;
 pub mod usb;
