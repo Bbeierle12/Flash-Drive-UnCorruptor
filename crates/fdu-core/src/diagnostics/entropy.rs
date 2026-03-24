@@ -94,8 +94,9 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
 
 /// Scan a device for entropy anomalies and debug signatures.
 ///
-/// Reads blocks of `BLOCK_SIZE` and computes Shannon entropy for each.
-/// Also scans for known allocator debug patterns.
+/// Reads every `BLOCK_SIZE` block on the device and computes Shannon
+/// entropy for each. Use `progress_cb` to display a progress bar — on
+/// large devices this scan reads the entire device.
 pub fn scan_entropy(
     device: &dyn Device,
     progress_cb: Option<Box<dyn Fn(u64, u64) + Send>>,
@@ -158,7 +159,8 @@ pub fn scan_entropy(
             }
         }
 
-        if block_idx % 1000 == 0 {
+        // Report progress every 256 blocks to avoid callback overhead
+        if block_idx % 256 == 0 {
             if let Some(ref cb) = progress_cb {
                 cb(block_idx, total_blocks);
             }
