@@ -126,8 +126,11 @@ fn detect_fat_by_cluster_count(bpb: &[u8]) -> FsType {
     let root_dir_sectors =
         (root_entry_count * 32).div_ceil(bytes_per_sector);
 
-    let data_sectors =
-        total_sectors - (reserved_sectors + (num_fats * fat_size) + root_dir_sectors);
+    let non_data = reserved_sectors + (num_fats * fat_size) + root_dir_sectors;
+    let data_sectors = match total_sectors.checked_sub(non_data) {
+        Some(d) => d,
+        None => return FsType::Unknown, // corrupted BPB: header fields exceed total size
+    };
     let cluster_count = data_sectors / sectors_per_cluster;
 
     if cluster_count < 4085 {

@@ -98,14 +98,14 @@ pub fn run(
     }
 
     if json {
-        let total_bytes: u64 = all_recoverable.iter().map(|f| f.estimated_size).sum();
+        let _total_bytes: u64 = all_recoverable.iter().map(|f| f.estimated_size).sum();
         let report = RecoveryReport {
             device_id: device_path.to_string(),
             files_found: all_recoverable.len(),
             // NOTE: extraction to disk is not yet implemented — these reflect
             // scan results only (files found, not yet written to output_dir).
             files_recovered: 0,
-            bytes_recovered: total_bytes,
+            bytes_recovered: 0,
             recovered_files: Vec::new(),
             scan_duration_ms: 0,
         };

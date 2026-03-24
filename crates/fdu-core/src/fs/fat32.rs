@@ -144,7 +144,7 @@ impl<'a> Fat32Fs<'a> {
         let bpb = &self.bpb;
         let data_start_sector = bpb.reserved_sectors as u64
             + (bpb.num_fats as u64 * bpb.fat_size_sectors as u64);
-        let data_sectors = bpb.total_sectors as u64 - data_start_sector;
+        let data_sectors = (bpb.total_sectors as u64).saturating_sub(data_start_sector);
         data_sectors / bpb.sectors_per_cluster as u64
     }
 
@@ -563,7 +563,10 @@ impl<'a> crate::fs::traits::FileSystemOps for Fat32Fs<'a> {
             match self.read_fat_entry(cluster) {
                 Ok(0) => free_clusters += 1,
                 Ok(_) => {}
-                Err(_) => continue, // Skip unreadable FAT entries, keep scanning
+                Err(e) => {
+                    tracing::warn!(cluster, error = %e, "Unreadable FAT entry during free-cluster scan");
+                    continue;
+                }
             }
         }
 

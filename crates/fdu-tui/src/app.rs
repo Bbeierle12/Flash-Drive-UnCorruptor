@@ -7,6 +7,24 @@ use ratatui::{Terminal, prelude::CrosstermBackend};
 
 use crate::{event, ui};
 
+/// Platform-aware default extraction directory.
+///
+/// Checks `FDU_EXTRACT_DIR` env var first, then falls back to
+/// `$XDG_DATA_HOME/fdu-extract` (Linux) or `~/.local/share/fdu-extract`.
+fn default_extract_dir() -> String {
+    if let Ok(dir) = std::env::var("FDU_EXTRACT_DIR") {
+        return dir;
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return format!("{}/fdu-extract", xdg);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return format!("{}/.local/share/fdu-extract", home.to_string_lossy());
+    }
+    // Ultimate fallback
+    "/tmp/fdu-extract".into()
+}
+
 // ── Screens / Views ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +88,7 @@ use fdu_device_enum::EnumeratedDevice;
 
 // ── Per-screen state holders ────────────────────────────────────────
 
-use fdu_core::models::{DiagnosticReport, FsType, RecoverableFile, ValidationReport};
+use fdu_core::models::{DiagnosticReport, RecoverableFile, ValidationReport};
 use fdu_disk::layout::DiskLayout;
 use fdu_models::extraction::ExtractionManifest;
 use fdu_models::threat::ThreatReport;
@@ -146,7 +164,7 @@ impl App {
             usb_devices: OpState::Idle,
             usb_list_index: 0,
             recover_result: OpState::Idle,
-            extract_output_dir: "/tmp/fdu-extract".into(),
+            extract_output_dir: default_extract_dir(),
             extract_result: OpState::Idle,
             finding_index: 0,
         }
@@ -171,7 +189,7 @@ impl App {
     // ── Key handling ────────────────────────────────────────────────
 
     fn handle_key(&mut self, key: KeyEvent) {
-        // Global: quit
+        // Global: quit (q or Ctrl+C)
         if event::is_quit(&key) {
             if self.screen == Screen::Dashboard {
                 self.running = false;
@@ -180,6 +198,41 @@ impl App {
             // Go back to dashboard from any other screen
             self.screen = Screen::Dashboard;
             return;
+        }
+
+        // Esc: go back to dashboard from any screen
+        if key.code == KeyCode::Esc {
+            self.screen = Screen::Dashboard;
+            return;
+        }
+
+        // Global: Tab / BackTab cycle through screens
+        match key.code {
+            KeyCode::Tab => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            KeyCode::BackTab => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + Screen::ALL.len() - 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            KeyCode::Left => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + Screen::ALL.len() - 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            KeyCode::Right => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            _ => {}
         }
 
         // Global: number keys navigate
@@ -348,56 +401,93 @@ impl App {
     }
 
     fn run_scan(&mut self) {
-        self.scan_result = OpState::Running("Scanning filesystem…".into());
-        let device = match self.open_device() {
-            Ok(d) => d,
-            Err(e) => {
-                self.scan_result = OpState::Error(e);
+        let path = match &self.selected_device {
+            Some(p) => p.clone(),
+            None => {
+                self.scan_result =
+                    OpState::Error("No device selected — go to Devices [1] and press Enter".into());
                 return;
             }
         };
 
-        let fs_type = match fdu_core::fs::detect_filesystem(device.as_ref()) {
-            Ok(t) => t,
-            Err(e) => {
-                self.scan_result = OpState::Error(format!("{e}"));
-                return;
-            }
-        };
+        let fdu_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("fdu")))
+            .unwrap_or_else(|| PathBuf::from("fdu"));
 
-        match fs_type {
-            FsType::Fat32 | FsType::Fat16 | FsType::Fat12 => {
-                use fdu_core::fs::fat32::Fat32Fs;
-                use fdu_core::fs::FileSystemOps;
-                match Fat32Fs::new(device.as_ref()) {
-                    Ok(fs) => match fs.validate() {
-                        Ok(report) => self.scan_result = OpState::Done(report),
-                        Err(e) => self.scan_result = OpState::Error(format!("{e}")),
-                    },
-                    Err(e) => self.scan_result = OpState::Error(format!("{e}")),
-                }
+        let terminal_cmd = find_terminal_emulator();
+        let child = std::process::Command::new(&terminal_cmd)
+            .args(terminal_exec_args(
+                &terminal_cmd,
+                &format!(
+                    "echo '=== Flash Drive UnCorruptor — Filesystem Scan ===' && echo && {} scan {:?}; echo && echo 'Press Enter to close...' && read",
+                    fdu_bin.display(),
+                    path,
+                ),
+            ))
+            .spawn();
+
+        match child {
+            Ok(_) => {
+                self.scan_result = OpState::Running(format!(
+                    "Scan running in external terminal for {}",
+                    path
+                ));
             }
-            other => {
+            Err(e) => {
                 self.scan_result = OpState::Error(format!(
-                    "Filesystem '{other}' scanning not yet supported. Currently: FAT12/16/32."
+                    "Failed to open terminal (tried '{}'): {}. \
+                     Run manually: fdu scan {:?}",
+                    terminal_cmd, e, path
                 ));
             }
         }
     }
 
     fn run_diagnose(&mut self) {
-        self.diagnose_result = OpState::Running("Running diagnostics…".into());
-        let device = match self.open_device() {
-            Ok(d) => d,
-            Err(e) => {
-                self.diagnose_result = OpState::Error(e);
+        let path = match &self.selected_device {
+            Some(p) => p.clone(),
+            None => {
+                self.diagnose_result =
+                    OpState::Error("No device selected — go to Devices [1] and press Enter".into());
                 return;
             }
         };
 
-        match fdu_core::diagnostics::scan_bad_sectors(device.as_ref(), None) {
-            Ok(report) => self.diagnose_result = OpState::Done(report),
-            Err(e) => self.diagnose_result = OpState::Error(format!("{e}")),
+        // Resolve the fdu CLI binary path (same directory as fdu-tui).
+        let fdu_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("fdu")))
+            .unwrap_or_else(|| PathBuf::from("fdu"));
+
+        // Launch `fdu diagnose <device> --bad-sectors` in a new terminal window
+        // so the user gets a live progress bar without blocking the TUI.
+        let terminal_cmd = find_terminal_emulator();
+        let child = std::process::Command::new(&terminal_cmd)
+            .args(terminal_exec_args(
+                &terminal_cmd,
+                &format!(
+                    "echo '=== Flash Drive UnCorruptor — Diagnostics ===' && echo && {} diagnose {:?} --bad-sectors; echo && echo 'Press Enter to close...' && read",
+                    fdu_bin.display(),
+                    path,
+                ),
+            ))
+            .spawn();
+
+        match child {
+            Ok(_) => {
+                self.diagnose_result = OpState::Running(format!(
+                    "Diagnostics running in external terminal for {}",
+                    path
+                ));
+            }
+            Err(e) => {
+                self.diagnose_result = OpState::Error(format!(
+                    "Failed to open terminal (tried '{}'): {}. \
+                     Run manually: fdu diagnose {:?} --bad-sectors",
+                    terminal_cmd, e, path
+                ));
+            }
         }
     }
 
@@ -495,4 +585,68 @@ impl App {
             Err(e) => self.extract_result = OpState::Error(format!("{e}")),
         }
     }
+}
+
+/// Find a terminal emulator available on the system.
+fn find_terminal_emulator() -> String {
+    // Check common terminal emulators in preference order
+    let candidates = [
+        "x-terminal-emulator", // Debian/Ubuntu default
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "mate-terminal",
+        "lxterminal",
+        "alacritty",
+        "kitty",
+        "wezterm",
+        "foot",
+        "xterm",
+    ];
+
+    for term in &candidates {
+        if which_exists(term) {
+            return term.to_string();
+        }
+    }
+
+    // Fallback
+    "xterm".to_string()
+}
+
+/// Build the correct exec arguments for the detected terminal emulator.
+/// Different terminals use different flags to run a command.
+fn terminal_exec_args(terminal: &str, command: &str) -> Vec<String> {
+    let base = terminal.rsplit('/').next().unwrap_or(terminal);
+    match base {
+        "gnome-terminal" => vec![
+            "--".into(),
+            "bash".into(),
+            "-c".into(),
+            command.into(),
+        ],
+        "konsole" => vec!["-e".into(), "bash".into(), "-c".into(), command.into()],
+        "alacritty" => vec!["-e".into(), "bash".into(), "-c".into(), command.into()],
+        "kitty" => vec!["bash".into(), "-c".into(), command.into()],
+        "wezterm" => vec!["start".into(), "--".into(), "bash".into(), "-c".into(), command.into()],
+        "foot" => vec!["-e".into(), "bash".into(), "-c".into(), command.into()],
+        // xterm, xfce4-terminal, mate-terminal, lxterminal, x-terminal-emulator
+        _ => vec!["-e".into(), format!("bash -c {}", shell_escape(command))],
+    }
+}
+
+/// Check if a command exists on PATH.
+fn which_exists(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Escape a string for use as a single shell argument.
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }

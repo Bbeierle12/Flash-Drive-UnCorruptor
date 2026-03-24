@@ -103,11 +103,11 @@ fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
                             data.len() - offset,
                         ),
                     )
-                    .with_evidence(Evidence::Bytes {
-                        offset: offset as u64,
-                        data: data[offset..].to_vec(),
-                        label: "Remaining bytes".into(),
-                    }),
+                    .with_evidence(Evidence::bytes(
+                        offset as u64,
+                        data[offset..].to_vec(),
+                        "Remaining bytes",
+                    )),
                 );
                 break;
             }
@@ -125,11 +125,11 @@ fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
                             offset, desc_len,
                         ),
                     )
-                    .with_evidence(Evidence::Bytes {
-                        offset: offset as u64,
-                        data: data[offset..data.len().min(offset + 4)].to_vec(),
-                        label: "Descriptor header".into(),
-                    }),
+                    .with_evidence(Evidence::bytes(
+                        offset as u64,
+                        data[offset..data.len().min(offset + 4)].to_vec(),
+                        "Descriptor header",
+                    )),
                 );
                 // Cannot advance — break to avoid infinite loop on length=0
                 break;
@@ -148,11 +148,11 @@ fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
                             offset, desc_len, data.len() - offset,
                         ),
                     )
-                    .with_evidence(Evidence::Bytes {
-                        offset: offset as u64,
-                        data: data[offset..].to_vec(),
-                        label: "Remaining bytes".into(),
-                    }),
+                    .with_evidence(Evidence::bytes(
+                        offset as u64,
+                        data[offset..].to_vec(),
+                        "Remaining bytes",
+                    )),
                 );
                 break;
             }

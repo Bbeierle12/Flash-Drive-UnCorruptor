@@ -208,39 +208,40 @@ fn detect_transport(dev_path: &Path) -> Option<String> {
 }
 
 /// Decode octal escape sequences used in /proc/mounts (e.g., `\040` → space).
+///
+/// Mount paths may contain multi-byte UTF-8 characters encoded as sequences of
+/// octal escapes (e.g., 日 = `\346\227\245`).  We collect raw bytes and convert
+/// to a String at the end to handle these correctly.
 fn decode_mount_escapes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
+    let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
+    let mut chars = s.as_bytes().iter();
+    while let Some(&b) = chars.next() {
+        if b == b'\\' {
             // Try to read a 3-digit octal escape
-            let mut octal = String::new();
-            for _ in 0..3 {
-                if let Some(&next) = chars.as_str().as_bytes().first() {
-                    if next.is_ascii_digit() {
-                        octal.push(next as char);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-            }
-            if octal.len() == 3 {
-                if let Ok(byte) = u8::from_str_radix(&octal, 8) {
-                    result.push(byte as char);
+            let remaining = chars.as_slice();
+            if remaining.len() >= 3
+                && remaining[0].is_ascii_digit()
+                && remaining[1].is_ascii_digit()
+                && remaining[2].is_ascii_digit()
+            {
+                let oct_str = std::str::from_utf8(&remaining[..3]).unwrap();
+                if let Ok(val) = u8::from_str_radix(oct_str, 8) {
+                    bytes.push(val);
+                    // Advance past the 3 octal digits
+                    chars.next();
+                    chars.next();
+                    chars.next();
                 } else {
-                    result.push('\\');
-                    result.push_str(&octal);
+                    bytes.push(b'\\');
                 }
             } else {
-                result.push('\\');
-                result.push_str(&octal);
+                bytes.push(b'\\');
             }
         } else {
-            result.push(c);
+            bytes.push(b);
         }
     }
-    result
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// Read a sysfs attribute file, returning None on failure.

@@ -40,14 +40,22 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn list_devices() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    match fdu_device_enum::enumerate_devices() {
-        Ok(devices) => Ok(Json(json!({
+    // enumerate_devices() performs synchronous sysfs I/O — run on a blocking
+    // thread to avoid starving the tokio worker pool under concurrent load.
+    match tokio::task::spawn_blocking(fdu_device_enum::enumerate_devices).await {
+        Ok(Ok(devices)) => Ok(Json(json!({
             "devices": devices,
         }))),
-        Err(e) => Err((
+        Ok(Err(e)) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": e.to_string(),
+            })),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Task failed: {}", e),
             })),
         )),
     }

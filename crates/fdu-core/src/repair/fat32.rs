@@ -69,7 +69,7 @@ impl Fat32Bpb {
     fn total_data_clusters(&self) -> u32 {
         let data_start_sector = self.reserved_sectors as u64
             + self.num_fats as u64 * self.fat_size_sectors as u64;
-        let data_sectors = self.total_sectors_32 as u64 - data_start_sector;
+        let data_sectors = (self.total_sectors_32 as u64).saturating_sub(data_start_sector);
         (data_sectors / self.sectors_per_cluster as u64) as u32
     }
 

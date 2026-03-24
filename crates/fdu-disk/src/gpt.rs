@@ -50,6 +50,15 @@ pub fn parse_gpt(
         )));
     }
 
+    // Cap entry size to a sane maximum to prevent OOM from crafted headers.
+    // The UEFI spec only defines 128-byte entries; allow up to 4 KiB.
+    if entry_size > 4096 {
+        return Err(DiskError::InvalidGpt(format!(
+            "Entry size {} exceeds maximum 4096",
+            entry_size
+        )));
+    }
+
     // Cap entries to a reasonable limit to prevent abuse
     let num_entries = num_entries.min(256) as usize;
 

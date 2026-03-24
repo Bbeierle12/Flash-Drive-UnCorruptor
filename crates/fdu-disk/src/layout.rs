@@ -181,8 +181,14 @@ fn find_gaps(partitions: &[PartitionInfo], total_sectors: u64) -> Vec<(u64, u64)
 
     let mut gaps = Vec::new();
 
-    // Gap before first partition (skip sector 0 for MBR/GPT headers)
-    let first_usable = 1_u64; // simplified — GPT would have more header sectors
+    // Gap before first partition.
+    // MBR reserves sector 0; GPT reserves LBAs 0-33 (header + entry array).
+    // Use sector 34 as first usable for GPT, 1 for MBR.
+    let first_usable = if partitions.iter().any(|p| p.start_lba >= 34) {
+        34_u64 // GPT: standard first usable LBA
+    } else {
+        1_u64 // MBR: sector 0 is the MBR itself
+    };
     if sorted[0].start_lba > first_usable {
         gaps.push((first_usable, sorted[0].start_lba - 1));
     }

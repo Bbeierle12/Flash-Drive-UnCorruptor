@@ -165,12 +165,22 @@ pub fn run_extraction(
         // Hash the content
         let sha256 = hasher::sha256_bytes(&data);
 
-        // Write to quarantine using sanitized name
+        // Write to quarantine using sanitized name.
+        // Use create_new to prevent TOCTOU symlink-following attacks:
+        // an attacker could race between create_dir_all and write to place a
+        // symlink, causing data to be written outside the quarantine.
         let quarantine_path = quarantine_dir.join(&safe_name);
         if let Some(parent) = quarantine_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&quarantine_path, &data)?;
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&quarantine_path)?;
+            f.write_all(&data)?;
+        }
 
         // Restrict quarantine file permissions to owner-only (prevent other
         // users from reading potentially malicious content).
