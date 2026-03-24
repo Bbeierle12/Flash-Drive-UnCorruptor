@@ -420,9 +420,9 @@ impl App {
             .args(terminal_exec_args(
                 &terminal_cmd,
                 &format!(
-                    "echo '=== Flash Drive UnCorruptor — Filesystem Scan ===' && echo && {} scan {:?}; echo && echo 'Press Enter to close...' && read",
-                    fdu_bin.display(),
-                    path,
+                    "echo '=== Flash Drive UnCorruptor — Filesystem Scan ===' && echo && {} scan {}; echo && echo 'Press Enter to close...' && read",
+                    shell_escape(&fdu_bin.to_string_lossy()),
+                    shell_escape(&path),
                 ),
             ))
             .spawn();
@@ -467,9 +467,9 @@ impl App {
             .args(terminal_exec_args(
                 &terminal_cmd,
                 &format!(
-                    "echo '=== Flash Drive UnCorruptor — Diagnostics ===' && echo && {} diagnose {:?} --bad-sectors; echo && echo 'Press Enter to close...' && read",
-                    fdu_bin.display(),
-                    path,
+                    "echo '=== Flash Drive UnCorruptor — Diagnostics ===' && echo && {} diagnose {} --bad-sectors; echo && echo 'Press Enter to close...' && read",
+                    shell_escape(&fdu_bin.to_string_lossy()),
+                    shell_escape(&path),
                 ),
             ))
             .spawn();
