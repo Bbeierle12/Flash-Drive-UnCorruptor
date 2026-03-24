@@ -3,6 +3,7 @@
 use comfy_table::{presets::UTF8_FULL, Cell, Color, Table};
 use fdu_core::device::traits::Device;
 use fdu_core::fs::detect::detect_filesystem;
+use fdu_core::fs::exfat::ExFatFs;
 use fdu_core::fs::fat32::Fat32Fs;
 use fdu_core::fs::ext4::ExtFs;
 use fdu_core::fs::ntfs::NtfsFs;
@@ -27,6 +28,10 @@ pub fn run(device_path: &str, _deep: bool, json: bool) -> anyhow::Result<()> {
             let fs = Fat32Fs::new(dev.as_ref())?;
             fs.validate()?
         }
+        FsType::ExFat => {
+            let fs = ExFatFs::new(dev.as_ref())?;
+            fs.validate()?
+        }
         FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
             let fs = ExtFs::new(dev.as_ref())?;
             fs.validate()?
@@ -38,7 +43,7 @@ pub fn run(device_path: &str, _deep: bool, json: bool) -> anyhow::Result<()> {
         _ => {
             anyhow::bail!(
                 "Filesystem '{}' scanning is not yet supported. \
-                 Currently supported: FAT12/16/32, ext2/3/4, NTFS.",
+                 Currently supported: FAT12/16/32, exFAT, ext2/3/4, NTFS.",
                 fs_type
             );
         }

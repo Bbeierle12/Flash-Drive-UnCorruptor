@@ -3,6 +3,7 @@
 use fdu_core::device::traits::Device;
 use fdu_core::diagnostics::{scan_bad_sectors, scan_entropy, detect_fake_flash};
 use fdu_core::fs::detect::detect_filesystem;
+use fdu_core::fs::exfat::ExFatFs;
 use fdu_core::fs::fat32::Fat32Fs;
 use fdu_core::fs::ext4::ExtFs;
 use fdu_core::fs::ntfs::NtfsFs;
@@ -32,6 +33,26 @@ pub fn run(device_path: &str, check_bad_sectors: bool, json: bool) -> anyhow::Re
                 | fdu_core::models::FsType::Fat16
                 | fdu_core::models::FsType::Fat12 => {
                     match Fat32Fs::new(dev.as_ref()) {
+                        Ok(fs) => match fs.validate() {
+                            Ok(report) => {
+                                let errors = report.error_count();
+                                let warnings = report.warning_count();
+                                if errors == 0 && warnings == 0 {
+                                    println!("  Status:   HEALTHY");
+                                } else {
+                                    println!("  Status:   {} errors, {} warnings", errors, warnings);
+                                    for issue in &report.issues {
+                                        println!("    [{:?}] {} — {}", issue.severity, issue.code, issue.message);
+                                    }
+                                }
+                            }
+                            Err(e) => println!("  Validation error: {}", e),
+                        },
+                        Err(e) => println!("  Parse error: {}", e),
+                    }
+                }
+                fdu_core::models::FsType::ExFat => {
+                    match ExFatFs::new(dev.as_ref()) {
                         Ok(fs) => match fs.validate() {
                             Ok(report) => {
                                 let errors = report.error_count();
