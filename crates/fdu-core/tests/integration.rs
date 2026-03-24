@@ -37,7 +37,8 @@ fn make_fat32_image() -> Vec<u8> {
     img[16] = num_fats;
     img[32..36].copy_from_slice(&total_sectors.to_le_bytes());
     img[36..40].copy_from_slice(&fat_size.to_le_bytes());
-    img[44..48].copy_from_slice(&2u32.to_le_bytes()); // root cluster = 2
+    let root_cluster: u32 = 2;
+    img[44..48].copy_from_slice(&root_cluster.to_le_bytes()); // root cluster
     img[71..82].copy_from_slice(b"INTTEST    ");
     img[82..90].copy_from_slice(b"FAT32   ");
     img[510] = 0x55;
@@ -46,10 +47,10 @@ fn make_fat32_image() -> Vec<u8> {
     // FAT tables — reserved entries
     for fat_idx in 0..num_fats as u32 {
         let fat_start = (reserved as u32 + fat_idx * fat_size) as usize * bps as usize;
-        img[fat_start..fat_start + 4].copy_from_slice(&0x0FFF_FF00u32.to_le_bytes());
-        img[fat_start + 4..fat_start + 8].copy_from_slice(&0x0FFF_FFFFu32.to_le_bytes());
-        // Root cluster (2) = end of chain
-        let root_off = fat_start + 2 * 4;
+        img[fat_start..fat_start + 4].copy_from_slice(&0x0FFF_FFF8u32.to_le_bytes()); // cluster 0: media descriptor
+        img[fat_start + 4..fat_start + 8].copy_from_slice(&0x0FFF_FFFFu32.to_le_bytes()); // cluster 1: EOC marker
+        // Root cluster = end of chain
+        let root_off = fat_start + root_cluster as usize * 4;
         img[root_off..root_off + 4].copy_from_slice(&0x0FFF_FFFFu32.to_le_bytes());
     }
 
@@ -261,9 +262,17 @@ fn phase6_bad_sector_scan_and_carving_coexistence() {
     let diag = scan_bad_sectors(&dev, None).unwrap();
     assert!(diag.bad_sectors.contains(&50));
 
-    // Carving will fail when it hits the bad sector, but that's expected
-    // The key point: both functions can operate on the same device
-    let _carving_result = scan_signatures(&dev, &[], None);
+    // Carving may find signatures before the bad sector, or fail when it
+    // hits one.  The key point: both functions can operate on the same device
+    // without interfering.  We explicitly verify the result instead of
+    // discarding it.
+    let carving_result = scan_signatures(&dev, &[], None);
+    // Either Ok (found some or none before the bad sector) or Err (hit bad sector)
+    // — both are acceptable in this scenario.
+    match &carving_result {
+        Ok(files) => assert!(files.len() <= 1, "Should find at most the planted JPEG"),
+        Err(_) => { /* bad-sector read error is acceptable */ }
+    }
 }
 
 #[test]

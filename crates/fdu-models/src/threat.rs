@@ -118,10 +118,13 @@ impl Finding {
     }
 }
 
+/// Maximum size for `Evidence::Bytes` data (1 MB).
+const MAX_EVIDENCE_BYTES: usize = 1024 * 1024;
+
 /// Evidence supporting a finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Evidence {
-    /// Raw bytes from the device.
+    /// Raw bytes from the device (capped at 1 MB).
     Bytes {
         offset: u64,
         data: Vec<u8>,
@@ -131,6 +134,22 @@ pub enum Evidence {
     Text(String),
     /// A numeric metric (e.g., "hidden_partition_gap_bytes": 104857600).
     Metric { key: String, value: f64 },
+}
+
+impl Evidence {
+    /// Create a `Bytes` evidence variant, truncating data to 1 MB.
+    pub fn bytes(offset: u64, data: Vec<u8>, label: impl Into<String>) -> Self {
+        let data = if data.len() > MAX_EVIDENCE_BYTES {
+            data[..MAX_EVIDENCE_BYTES].to_vec()
+        } else {
+            data
+        };
+        Evidence::Bytes {
+            offset,
+            data,
+            label: label.into(),
+        }
+    }
 }
 
 /// Aggregated threat report for a device scan.
@@ -250,19 +269,36 @@ mod tests {
 
     #[test]
     fn finding_serialization_roundtrip() {
-        let f = Finding::new("test", Severity::Medium, "Title", "Desc");
+        let f = Finding::new("test.det", Severity::Medium, "Title", "Desc")
+            .with_evidence(Evidence::Text("proof".into()))
+            .with_remediation("fix it")
+            .with_cve("CVE-2024-9999");
         let json = serde_json::to_string(&f).unwrap();
         let f2: Finding = serde_json::from_str(&json).unwrap();
         assert_eq!(f.id, f2.id);
+        assert_eq!(f.detector, f2.detector);
         assert_eq!(f.severity, f2.severity);
+        assert_eq!(f.status, f2.status);
+        assert_eq!(f.title, f2.title);
+        assert_eq!(f.description, f2.description);
+        assert_eq!(f.evidence.len(), f2.evidence.len());
+        assert_eq!(f.remediation, f2.remediation);
+        assert_eq!(f.cve, f2.cve);
+        assert_eq!(f.timestamp, f2.timestamp);
     }
 
     #[test]
     fn threat_report_serialization_roundtrip() {
-        let report = ThreatReport::from_findings("dev0", vec![], Duration::from_secs(5));
+        let findings = vec![
+            Finding::new("a", Severity::Low, "Low", "Low finding"),
+        ];
+        let report = ThreatReport::from_findings("dev0", findings, Duration::from_secs(5));
         let json = serde_json::to_string(&report).unwrap();
         let report2: ThreatReport = serde_json::from_str(&json).unwrap();
         assert_eq!(report.device_id, report2.device_id);
         assert_eq!(report.scan_duration, report2.scan_duration);
+        assert_eq!(report.overall_risk, report2.overall_risk);
+        assert_eq!(report.safe_to_mount, report2.safe_to_mount);
+        assert_eq!(report.findings.len(), report2.findings.len());
     }
 }

@@ -18,8 +18,79 @@ use fdu_models::{
     ExtractedFile, ExtractionManifest, ExtractionPolicy, ExtractionProgress, Severity,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
+
+/// Sanitize a filename from a device to prevent path traversal and
+/// Unicode-based attacks.
+///
+/// 1. Strips all path components (e.g. `../../etc/cron.d/backdoor` → `backdoor`)
+/// 2. Rejects empty names, `.`, and `..`
+/// 3. Strips null bytes and dangerous Unicode characters (RTL override,
+///    zero-width joiners/spaces, etc.)
+/// 4. Rejects Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`,
+///    `COM1`–`COM9`, `LPT1`–`LPT9`)
+fn sanitize_filename(name: &str) -> Option<String> {
+    let path = Path::new(name);
+    // Extract only the final file_name component, stripping any directory traversal
+    let safe_name = path
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .next_back()?;
+
+    if safe_name.is_empty() || safe_name == "." || safe_name == ".." {
+        return None;
+    }
+
+    // Strip null bytes and dangerous Unicode characters:
+    //   U+200B  zero-width space
+    //   U+200C  zero-width non-joiner
+    //   U+200D  zero-width joiner
+    //   U+200E  left-to-right mark
+    //   U+200F  right-to-left mark
+    //   U+202A–U+202E  bidi embedding / override
+    //   U+2060  word joiner
+    //   U+FEFF  byte-order mark / zero-width no-break space
+    let cleaned: String = safe_name
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && *c != '\0'
+                && !matches!(
+                    *c,
+                    '\u{200B}'..='\u{200F}'
+                        | '\u{202A}'..='\u{202E}'
+                        | '\u{2060}'
+                        | '\u{FEFF}'
+                )
+        })
+        .collect();
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    // Reject Windows reserved device names (with or without extension).
+    // "CON.txt" is still reserved on Windows.
+    let stem = cleaned
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+        "LPT9",
+    ];
+    if RESERVED.contains(&stem.as_str()) {
+        return None;
+    }
+
+    Some(cleaned)
+}
 
 /// Run the full quarantine extraction pipeline.
 pub fn run_extraction(
@@ -31,12 +102,17 @@ pub fn run_extraction(
     // Create output directory if needed
     std::fs::create_dir_all(output_dir)?;
 
-    // Create quarantine staging area
-    let quarantine_dir = tempfile::tempdir()
+    // Create quarantine staging area inside the output directory so the path
+    // remains valid after this function returns.  Using a child directory of
+    // output_dir avoids the TempDir-drop problem (tempfile::tempdir() would
+    // delete the directory when dropped, leaving the manifest with a dangling
+    // path).
+    let quarantine_dir = output_dir.join(".quarantine");
+    std::fs::create_dir_all(&quarantine_dir)
         .map_err(|e| ExtractError::QuarantineSetup(e.to_string()))?;
 
     info!(
-        quarantine = %quarantine_dir.path().display(),
+        quarantine = %quarantine_dir.display(),
         output = %output_dir.display(),
         policy = %policy,
         "Starting quarantine extraction"
@@ -65,6 +141,18 @@ pub fn run_extraction(
 
         debug!(file = %file_info.name, size = file_info.size, "Processing file");
 
+        // Sanitize filename to prevent path traversal
+        let safe_name = match sanitize_filename(&file_info.name) {
+            Some(name) => name,
+            None => {
+                warn!(
+                    file = %file_info.name,
+                    "Skipping file with invalid or malicious filename"
+                );
+                continue;
+            }
+        };
+
         // Read file data from device
         let data = match read_file_data(device, file_info) {
             Ok(d) => d,
@@ -77,15 +165,24 @@ pub fn run_extraction(
         // Hash the content
         let sha256 = hasher::sha256_bytes(&data);
 
-        // Write to quarantine
-        let quarantine_path = quarantine_dir.path().join(&file_info.name);
+        // Write to quarantine using sanitized name
+        let quarantine_path = quarantine_dir.join(&safe_name);
         if let Some(parent) = quarantine_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&quarantine_path, &data)?;
 
+        // Restrict quarantine file permissions to owner-only (prevent other
+        // users from reading potentially malicious content).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&quarantine_path, perms)?;
+        }
+
         // Assess threat level (simplified — in production this would use the audit engine)
-        let threat_level = assess_threat_level(&data, &file_info.name);
+        let threat_level = assess_threat_level(&data, &safe_name);
 
         // Apply policy filter
         if !policy.allows(threat_level) {
@@ -97,8 +194,8 @@ pub fn run_extraction(
             continue;
         }
 
-        // Move to output directory
-        let output_path = output_dir.join(&file_info.name);
+        // Move to output directory using sanitized name
+        let output_path = output_dir.join(&safe_name);
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -128,7 +225,7 @@ pub fn run_extraction(
 
     let manifest = ExtractionManifest {
         files: extracted,
-        quarantine_path: quarantine_dir.path().to_path_buf(),
+        quarantine_path: quarantine_dir.clone(),
         policy,
         integrity_hashes,
     };
@@ -212,7 +309,15 @@ fn discover_carved_files(device: &dyn Device) -> Result<Vec<DiscoveredFile>, Ext
 /// Read file data from the device.
 fn read_file_data(device: &dyn Device, file: &DiscoveredFile) -> Result<Vec<u8>, ExtractError> {
     // Cap file read at 100MB for safety
-    let max_size = 100 * 1024 * 1024;
+    let max_size: u64 = 100 * 1024 * 1024;
+    if file.size > max_size {
+        warn!(
+            file = %file.name,
+            original_size = file.size,
+            capped_size = max_size,
+            "File exceeds 100 MB cap — content will be truncated and hash will not match the original"
+        );
+    }
     let size = file.size.min(max_size) as usize;
 
     if size == 0 {
@@ -260,6 +365,91 @@ fn assess_threat_level(data: &[u8], filename: &str) -> Severity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_strips_traversal() {
+        assert_eq!(
+            sanitize_filename("../../etc/cron.d/backdoor"),
+            Some("backdoor".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_absolute_path() {
+        assert_eq!(
+            sanitize_filename("/etc/passwd"),
+            Some("passwd".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_normal_filename() {
+        assert_eq!(
+            sanitize_filename("readme.txt"),
+            Some("readme.txt".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_rejects_empty() {
+        assert_eq!(sanitize_filename(""), None);
+    }
+
+    #[test]
+    fn sanitize_rejects_dots() {
+        assert_eq!(sanitize_filename(".."), None);
+        assert_eq!(sanitize_filename("."), None);
+    }
+
+    #[test]
+    fn sanitize_rejects_only_traversal() {
+        assert_eq!(sanitize_filename("../.."), None);
+    }
+
+    #[test]
+    fn sanitize_strips_null_bytes() {
+        assert_eq!(
+            sanitize_filename("hello\0world.txt"),
+            Some("helloworld.txt".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_rtl_override() {
+        // U+202E (right-to-left override) is used to visually reverse filenames
+        assert_eq!(
+            sanitize_filename("readme\u{202E}fdp.exe"),
+            Some("readmefdp.exe".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_zero_width_chars() {
+        assert_eq!(
+            sanitize_filename("ma\u{200B}lware.exe"),
+            Some("malware.exe".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_rejects_windows_reserved() {
+        assert_eq!(sanitize_filename("CON"), None);
+        assert_eq!(sanitize_filename("con.txt"), None);
+        assert_eq!(sanitize_filename("PRN"), None);
+        assert_eq!(sanitize_filename("AUX"), None);
+        assert_eq!(sanitize_filename("NUL"), None);
+        assert_eq!(sanitize_filename("COM1"), None);
+        assert_eq!(sanitize_filename("LPT1.log"), None);
+    }
+
+    #[test]
+    fn sanitize_allows_similar_to_reserved() {
+        // "CONFIGURE" starts with "CON" but is not a reserved name
+        assert_eq!(
+            sanitize_filename("CONFIGURE.txt"),
+            Some("CONFIGURE.txt".into())
+        );
+    }
 
     #[test]
     fn threat_assessment_safe_file() {

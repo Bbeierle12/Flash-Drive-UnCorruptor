@@ -43,15 +43,23 @@ pub trait Device: Send + Sync {
 /// Extension trait for convenient device reading.
 pub trait DeviceExt: Device {
     /// Read exactly `len` bytes from `offset`, or error.
+    ///
+    /// Loops to handle short reads (POSIX `read()` may return fewer bytes than
+    /// requested even when more data is available).
     fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         let mut buf = vec![0u8; len];
-        let n = self.read_at(offset, &mut buf)?;
-        if n < len {
-            return Err(crate::errors::Error::OutOfBounds {
-                offset,
-                requested: len,
-                device_size: self.size(),
-            });
+        let mut filled = 0usize;
+        while filled < len {
+            let n = self.read_at(offset + filled as u64, &mut buf[filled..])?;
+            if n == 0 {
+                // True EOF — no more data available
+                return Err(crate::errors::Error::OutOfBounds {
+                    offset,
+                    requested: len,
+                    device_size: self.size(),
+                });
+            }
+            filled += n;
         }
         Ok(buf)
     }

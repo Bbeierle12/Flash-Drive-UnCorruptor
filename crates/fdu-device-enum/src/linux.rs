@@ -36,11 +36,17 @@ pub fn enumerate() -> Result<Vec<EnumeratedDevice>, EnumError> {
             .map(|v| v.trim() == "1")
             .unwrap_or(false);
 
-        // Get size (in 512-byte sectors)
+        // sysfs "size" is always in 512-byte units regardless of actual
+        // hardware sector size.
         let size_sectors = read_sysfs_value(&dev_path.join("size"))
             .and_then(|v| v.trim().parse::<u64>().ok())
             .unwrap_or(0);
         let size_bytes = size_sectors * 512;
+
+        // Read the actual logical sector size from sysfs (typically 512 or 4096).
+        let sector_size = read_sysfs_value(&dev_path.join("queue/logical_block_size"))
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .unwrap_or(512);
 
         // Get device model
         let model = read_sysfs_value(&dev_path.join("device/model"))
@@ -74,6 +80,7 @@ pub fn enumerate() -> Result<Vec<EnumeratedDevice>, EnumError> {
                 is_removable,
                 mount_point,
                 transport: transport.clone(),
+                sector_size,
             });
         } else {
             // Add each partition
@@ -89,6 +96,7 @@ pub fn enumerate() -> Result<Vec<EnumeratedDevice>, EnumError> {
                     is_removable,
                     mount_point,
                     transport: transport.clone(),
+                    sector_size,
                 });
             }
         }
@@ -135,8 +143,10 @@ fn read_mount_points() -> Result<HashMap<String, PathBuf>, EnumError> {
     for line in content.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 {
-            let device = parts[0].to_string();
-            let mount = PathBuf::from(parts[1]);
+            // /proc/mounts encodes special characters using octal escapes
+            // (e.g., spaces as \040).  Decode them so paths match correctly.
+            let device = decode_mount_escapes(parts[0]);
+            let mount = PathBuf::from(decode_mount_escapes(parts[1]));
             mounts.insert(device, mount);
         }
     }
@@ -146,23 +156,75 @@ fn read_mount_points() -> Result<HashMap<String, PathBuf>, EnumError> {
 
 /// Try to detect transport type (USB, ATA, etc.) from sysfs path.
 fn detect_transport(dev_path: &Path) -> Option<String> {
-    // Resolve the device symlink and look for "usb" in the path
-    if let Ok(resolved) = fs::read_link(dev_path.join("device")) {
-        let resolved_str = resolved.to_string_lossy();
-        if resolved_str.contains("usb") {
-            return Some("usb".to_string());
-        }
-        if resolved_str.contains("ata") {
-            return Some("ata".to_string());
-        }
-        if resolved_str.contains("nvme") {
-            return Some("nvme".to_string());
-        }
-        if resolved_str.contains("mmc") {
-            return Some("mmc".to_string());
+    // Resolve the device symlink and look for transport indicators in the path.
+    // Also try canonicalizing the full path for deeper sysfs trees.
+    let resolved_str = fs::read_link(dev_path.join("device"))
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|_| {
+            fs::canonicalize(dev_path.join("device"))
+                .map(|p| p.to_string_lossy().to_string())
+        })
+        .ok()?;
+
+    // Order matters: check more specific transports first.
+    let transport_keywords: &[(&str, &str)] = &[
+        ("thunderbolt", "thunderbolt"),
+        ("usb", "usb"),
+        ("nvme", "nvme"),
+        ("mmc", "mmc"),
+        ("firewire", "firewire"),
+        ("ieee1394", "firewire"),
+        ("virtio", "virtio"),
+        ("scsi", "scsi"),
+        ("ata", "ata"),
+    ];
+
+    // Match against path segments (split on '/') to avoid false positives
+    // like "musicbox" matching "usb".
+    let segments: Vec<&str> = resolved_str.split('/').collect();
+    for &(keyword, transport) in transport_keywords {
+        if segments.iter().any(|seg| seg.starts_with(keyword) || seg.contains(&format!(":{}", keyword)) || *seg == keyword) {
+            return Some(transport.to_string());
         }
     }
+
     None
+}
+
+/// Decode octal escape sequences used in /proc/mounts (e.g., `\040` → space).
+fn decode_mount_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Try to read a 3-digit octal escape
+            let mut octal = String::new();
+            for _ in 0..3 {
+                if let Some(&next) = chars.as_str().as_bytes().first() {
+                    if next.is_ascii_digit() {
+                        octal.push(next as char);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if octal.len() == 3 {
+                if let Ok(byte) = u8::from_str_radix(&octal, 8) {
+                    result.push(byte as char);
+                } else {
+                    result.push('\\');
+                    result.push_str(&octal);
+                }
+            } else {
+                result.push('\\');
+                result.push_str(&octal);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Read a sysfs attribute file, returning None on failure.

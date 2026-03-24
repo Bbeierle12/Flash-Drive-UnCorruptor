@@ -90,7 +90,8 @@ impl DiskLayout {
     pub fn unallocated_bytes(&self) -> u64 {
         self.unallocated_regions
             .iter()
-            .map(|(start, end)| (end - start + 1) * self.sector_size as u64)
+            .filter(|(start, end)| end >= start)
+            .map(|(start, end)| (end - start + 1).saturating_mul(self.sector_size as u64))
             .sum()
     }
 }
@@ -98,6 +99,9 @@ impl DiskLayout {
 /// Analyze a device's partition layout.
 pub(crate) fn analyze(device: &dyn Device) -> Result<DiskLayout, DiskError> {
     let sector_size = device.sector_size();
+    if sector_size == 0 {
+        return Err(DiskError::DeviceRead("sector_size is 0".into()));
+    }
     let total_sectors = device.size() / sector_size as u64;
 
     if total_sectors < 1 {

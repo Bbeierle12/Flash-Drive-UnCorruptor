@@ -5,7 +5,7 @@
 //! - WebSocket for real-time progress updates
 //! - Embedded Preact SPA frontend
 
-use axum::{routing::get, Json, Router};
+use axum::{http::StatusCode, routing::get, Json, Router};
 use serde_json::json;
 
 #[tokio::main]
@@ -39,13 +39,16 @@ async fn health() -> Json<serde_json::Value> {
     }))
 }
 
-async fn list_devices() -> Json<serde_json::Value> {
+async fn list_devices() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     match fdu_device_enum::enumerate_devices() {
-        Ok(devices) => Json(json!({
+        Ok(devices) => Ok(Json(json!({
             "devices": devices,
-        })),
-        Err(e) => Json(json!({
-            "error": e.to_string(),
-        })),
+        }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": e.to_string(),
+            })),
+        )),
     }
 }

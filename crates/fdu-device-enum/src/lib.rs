@@ -28,6 +28,13 @@ pub struct EnumeratedDevice {
     pub mount_point: Option<PathBuf>,
     /// Transport type (usb, ata, etc.)
     pub transport: Option<String>,
+    /// Logical sector size in bytes (from sysfs, typically 512 or 4096).
+    #[serde(default = "default_sector_size")]
+    pub sector_size: u32,
+}
+
+fn default_sector_size() -> u32 {
+    512
 }
 
 /// Enumerate all removable storage devices on the system.

@@ -9,6 +9,7 @@ members = [
     "crates/fdu-disk",
     "crates/fdu-audit",
     "crates/fdu-extract",
+    "crates/fdu-tui",
     # fdu-fuzz is NOT a workspace member (cargo-fuzz has its own build)
 ]
 resolver = "2"

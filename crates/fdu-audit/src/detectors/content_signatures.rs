@@ -35,16 +35,16 @@ const SUSPICIOUS_PATTERNS: &[SuspiciousPattern] = &[
     SuspiciousPattern {
         name: "Shell script",
         magic: b"#!/",
-        severity: Severity::Low,
-        description: "Shell script found on removable media. Inspect for malicious commands.",
+        severity: Severity::Medium,
+        description: "Shell script found on removable media. Scripts can execute arbitrary \
+                      commands — inspect before running.",
     },
 ];
 
-/// Known autorun-style filenames that could trigger auto-execution.
+/// Known autorun-style patterns to scan for (all lowercase — input is
+/// lowercased before comparison so we catch every casing variant).
 const AUTORUN_SIGNATURES: &[&[u8]] = &[
     b"[autorun]",
-    b"[AutoRun]",
-    b"AUTORUN.INF",
     b"autorun.inf",
 ];
 
@@ -73,9 +73,11 @@ impl Detector for ContentSignatureDetector {
 /// Scan first sectors of each partition for autorun.inf content.
 fn scan_for_autorun(ctx: &ScanContext) -> Vec<Finding> {
     let mut findings = Vec::new();
+    let mut found_patterns = std::collections::HashSet::new();
 
-    // Read a chunk from the device and search for autorun patterns
-    let scan_size = ctx.device.size().min(1024 * 1024) as usize; // first 1MB
+    // Scan first 16MB for autorun patterns — autorun.inf can appear anywhere
+    // in the first partition, not just the first few sectors.
+    let scan_size = ctx.device.size().min(16 * 1024 * 1024) as usize;
     let chunk_size = 64 * 1024; // 64KB chunks
 
     let mut offset = 0u64;
@@ -86,8 +88,16 @@ fn scan_for_autorun(ctx: &ScanContext) -> Vec<Finding> {
             Err(_) => break,
         };
 
+        // Convert chunk to lowercase ASCII for case-insensitive matching.
+        // Autorun patterns are ASCII, so byte-level lowering is correct.
+        let data_lower: Vec<u8> = data.iter().map(|b| b.to_ascii_lowercase()).collect();
+
         for pattern in AUTORUN_SIGNATURES {
-            if let Some(pos) = find_subsequence(&data, pattern) {
+            if found_patterns.contains(pattern) {
+                continue;
+            }
+            if let Some(pos) = find_subsequence(&data_lower, pattern) {
+                found_patterns.insert(pattern);
                 findings.push(
                     Finding::new(
                         "content.autorun",
@@ -106,7 +116,6 @@ fn scan_for_autorun(ctx: &ScanContext) -> Vec<Finding> {
                          content before proceeding.",
                     ),
                 );
-                return findings; // One finding is enough
             }
         }
 
@@ -120,8 +129,8 @@ fn scan_for_autorun(ctx: &ScanContext) -> Vec<Finding> {
 fn scan_for_executables(ctx: &ScanContext) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    // Scan first 2MB for executable signatures
-    let scan_size = ctx.device.size().min(2 * 1024 * 1024) as usize;
+    // Scan first 16MB for executable signatures
+    let scan_size = ctx.device.size().min(16 * 1024 * 1024) as usize;
     let chunk_size = 64 * 1024;
 
     let mut offset = 0u64;
@@ -156,9 +165,13 @@ fn scan_for_executables(ctx: &ScanContext) -> Vec<Finding> {
 }
 
 /// Find a byte subsequence in a haystack.
+///
+/// Returns `None` for empty needles — an empty pattern is not a meaningful
+/// match and would cause false positives if a signature were accidentally
+/// cleared.
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
-        return Some(0);
+        return None;
     }
     haystack
         .windows(needle.len())
@@ -178,7 +191,8 @@ mod tests {
 
     #[test]
     fn find_subsequence_empty() {
-        assert!(find_subsequence(b"hello", b"").is_some()); // empty matches at 0
+        // Empty needle should NOT match — it would cause false positives
+        assert!(find_subsequence(b"hello", b"").is_none());
         assert!(find_subsequence(b"", b"x").is_none());
     }
 }

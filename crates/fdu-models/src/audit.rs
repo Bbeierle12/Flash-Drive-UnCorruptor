@@ -88,5 +88,8 @@ mod tests {
         let json = serde_json::to_string(&evt).unwrap();
         let evt2: AuditEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(evt.event_type, evt2.event_type);
+        assert_eq!(evt.device_id, evt2.device_id);
+        assert_eq!(evt.details, evt2.details);
+        assert_eq!(evt.timestamp, evt2.timestamp);
     }
 }

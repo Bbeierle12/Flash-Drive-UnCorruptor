@@ -1,0 +1,29 @@
+[package]
+name = "fdu-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Interactive TUI for Flash Drive UnCorruptor"
+
+[[bin]]
+name = "fdu-tui"
+path = "src/main.rs"
+
+[dependencies]
+fdu-core = { workspace = true }
+fdu-device-enum = { workspace = true }
+fdu-models = { workspace = true }
+fdu-usb = { workspace = true }
+fdu-disk = { workspace = true }
+fdu-audit = { workspace = true }
+fdu-extract = { workspace = true }
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+ratatui = "0.29"
+crossterm = "0.28"

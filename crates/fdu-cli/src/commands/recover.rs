@@ -16,7 +16,11 @@ pub fn run(
     file_types: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    println!("Recovering files from {}...", device_path);
+    println!("WARNING: This command currently performs a recovery SCAN only.");
+    println!("         File extraction to disk is not yet implemented.");
+    println!("         Do NOT delete original media based on these results.");
+    println!();
+    println!("Scanning for recoverable files on {}...", device_path);
     println!("Output directory: {}", output_dir);
     println!();
 
@@ -33,7 +37,11 @@ pub fn run(
     let strategy = match strategy {
         "carving" => RecoveryStrategy::SignatureCarving,
         "cluster" | "cluster-scan" => RecoveryStrategy::ClusterScan,
-        _ => RecoveryStrategy::Both,
+        "both" => RecoveryStrategy::Both,
+        other => anyhow::bail!(
+            "Unknown recovery strategy '{}'. Valid options: carving, cluster, cluster-scan, both",
+            other
+        ),
     };
 
     let mut all_recoverable = Vec::new();
@@ -90,11 +98,14 @@ pub fn run(
     }
 
     if json {
+        let total_bytes: u64 = all_recoverable.iter().map(|f| f.estimated_size).sum();
         let report = RecoveryReport {
             device_id: device_path.to_string(),
             files_found: all_recoverable.len(),
-            files_recovered: 0, // TODO: actual extraction
-            bytes_recovered: 0,
+            // NOTE: extraction to disk is not yet implemented — these reflect
+            // scan results only (files found, not yet written to output_dir).
+            files_recovered: 0,
+            bytes_recovered: total_bytes,
             recovered_files: Vec::new(),
             scan_duration_ms: 0,
         };
@@ -132,12 +143,10 @@ pub fn run(
         println!("  ... and {} more", all_recoverable.len() - 50);
     }
 
-    // TODO Phase 3: Actually extract files to output_dir
     println!();
-    println!(
-        "Note: File extraction to disk will be available in a future update. \
-         Currently showing scan results only."
-    );
+    println!("NOTE: File extraction to disk is NOT yet implemented.");
+    println!("      The files listed above have NOT been saved to '{}'.", output_dir);
+    println!("      Do NOT delete or format the original media.");
 
     Ok(())
 }
@@ -149,7 +158,7 @@ fn open_device(_path: &str) -> anyhow::Result<Box<dyn Device>> {
         if _path.starts_with("/dev/") {
             Ok(Box::new(LinuxDevice::open(_path, false)?))
         } else {
-            Ok(Box::new(LinuxDevice::open_image(path)?))
+            Ok(Box::new(LinuxDevice::open_image(_path)?))
         }
     }
 

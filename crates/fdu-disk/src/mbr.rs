@@ -33,8 +33,8 @@ pub fn parse_mbr(sector0: &[u8], sector_size: u32) -> Vec<PartitionInfo> {
             continue;
         }
 
-        let end_lba = start_lba + num_sectors - 1;
-        let size_bytes = num_sectors * sector_size as u64;
+        let end_lba = start_lba.saturating_add(num_sectors).saturating_sub(1);
+        let size_bytes = num_sectors.saturating_mul(sector_size as u64);
 
         let type_label = mbr_type_name(type_byte);
         let bootable = status == 0x80;

@@ -140,9 +140,24 @@ mod tests {
 
     #[test]
     fn serialization_roundtrip() {
-        let cfg = AuditConfig::default();
+        let mut cfg = AuditConfig::default();
+        cfg.skip_phases.push(Phase::Usb);
+        cfg.min_severity = Severity::Medium;
         let json = serde_json::to_string(&cfg).unwrap();
         let cfg2: AuditConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg.enable_content_scan, cfg2.enable_content_scan);
+        assert_eq!(cfg.enable_forensics, cfg2.enable_forensics);
+        assert_eq!(cfg.min_severity, cfg2.min_severity);
+        assert_eq!(cfg.timeout.as_secs(), cfg2.timeout.as_secs());
+        assert_eq!(cfg.skip_phases.len(), cfg2.skip_phases.len());
+    }
+
+    #[test]
+    fn skip_phases_overrides_feature_flag() {
+        let mut cfg = AuditConfig::default();
+        cfg.enable_content_scan = true;
+        cfg.skip_phases.push(Phase::Content);
+        // skip_phases should take priority over the feature flag
+        assert!(!cfg.should_run_phase(Phase::Content));
     }
 }

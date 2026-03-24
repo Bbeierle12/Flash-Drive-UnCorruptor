@@ -131,5 +131,12 @@ mod tests {
         let fp2: UsbFingerprint = serde_json::from_str(&json).unwrap();
         assert_eq!(fp.vendor_id, fp2.vendor_id);
         assert_eq!(fp.product_id, fp2.product_id);
+        assert_eq!(fp.manufacturer, fp2.manufacturer);
+        assert_eq!(fp.product, fp2.product);
+        assert_eq!(fp.serial, fp2.serial);
+        assert_eq!(fp.device_class, fp2.device_class);
+        assert_eq!(fp.interface_classes, fp2.interface_classes);
+        assert_eq!(fp.bcd_device, fp2.bcd_device);
+        assert_eq!(fp.descriptors_raw, fp2.descriptors_raw);
     }
 }

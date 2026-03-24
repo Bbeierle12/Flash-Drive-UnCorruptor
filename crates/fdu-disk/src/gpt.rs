@@ -91,6 +91,17 @@ pub fn parse_gpt(
             .filter_map(|c| char::from_u32(c as u32))
             .collect();
 
+        // Reject malformed entries where end < start to avoid underflow
+        if end_lba < start_lba {
+            debug!(
+                index = i,
+                start_lba,
+                end_lba,
+                "Skipping GPT entry with end_lba < start_lba"
+            );
+            continue;
+        }
+
         let type_guid_str = format_guid(type_guid);
         let type_label = gpt_type_name(&type_guid_str);
         let size_bytes = (end_lba - start_lba + 1) * sector_size as u64;
@@ -252,6 +263,31 @@ mod tests {
         let device = MockDevice::new(1024 * 1024);
         let result = parse_gpt(&lba1, &device, 512, 2048);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn malformed_end_lba_less_than_start() {
+        // end_lba < start_lba should be skipped, not panic
+        let disk = make_gpt_image(10000, 5000, &BASIC_DATA_GUID);
+        let device = MockDevice::from_bytes(disk);
+
+        let mut lba1 = vec![0u8; 512];
+        device.read_at(512, &mut lba1).unwrap();
+
+        let parts = parse_gpt(&lba1, &device, 512, device.size() / 512).unwrap();
+        assert!(parts.is_empty(), "Malformed entry should be skipped");
+    }
+
+    #[test]
+    fn parse_verifies_size_bytes() {
+        let disk = make_gpt_image(2048, 10239, &BASIC_DATA_GUID);
+        let device = MockDevice::from_bytes(disk);
+
+        let mut lba1 = vec![0u8; 512];
+        device.read_at(512, &mut lba1).unwrap();
+
+        let parts = parse_gpt(&lba1, &device, 512, device.size() / 512).unwrap();
+        assert_eq!(parts[0].size_bytes, (10239 - 2048 + 1) * 512);
     }
 
     #[test]

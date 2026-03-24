@@ -12,6 +12,59 @@ use fdu_models::{Evidence, Finding, Severity};
 
 pub struct DeletedForensicsDetector;
 
+/// File type extensions considered suspicious when found among deleted files.
+const SUSPICIOUS_TYPES: &[&str] = &[
+    "exe", "bat", "cmd", "com", "dll", "scr", "pif", "vbs", "vbe",
+    "js", "jse", "wsf", "wsh", "ps1", "msi", "msp",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AuditConfig;
+    use fdu_core::device::MockDevice;
+
+    #[test]
+    fn phase_is_forensics() {
+        assert_eq!(DeletedForensicsDetector.phase(), Phase::Forensics);
+    }
+
+    #[test]
+    fn unknown_fs_returns_empty() {
+        let dev = MockDevice::new(1024 * 1024);
+        let cfg = AuditConfig::default();
+        let ctx = ScanContext {
+            device: &dev,
+            usb_fingerprint: None,
+            disk_layout: None,
+            fs_metadata: None,
+            config: &cfg,
+        };
+        let findings = DeletedForensicsDetector.detect(&ctx).unwrap();
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn suspicious_type_matching_is_exact() {
+        // Verify the SUSPICIOUS_TYPES list uses exact matching, not substrings.
+        // "example" should NOT match "exe", "habitat" should NOT match "bat".
+        let fake_types = vec!["example", "habitat", "dllm", "prescription"];
+        for ft in &fake_types {
+            let is_suspicious = SUSPICIOUS_TYPES.iter().any(|ext| ft.to_lowercase() == *ext);
+            assert!(
+                !is_suspicious,
+                "'{}' should NOT be flagged as suspicious",
+                ft
+            );
+        }
+        // But actual dangerous types should match
+        for ext in &["exe", "bat", "dll", "ps1", "vbs"] {
+            let is_suspicious = SUSPICIOUS_TYPES.iter().any(|e| ext.to_lowercase() == *e);
+            assert!(is_suspicious, "'{}' SHOULD be flagged as suspicious", ext);
+        }
+    }
+}
+
 impl Detector for DeletedForensicsDetector {
     fn name(&self) -> &str {
         "Deleted File Forensics Detector"
@@ -63,10 +116,7 @@ impl DeletedForensicsDetector {
             .iter()
             .filter(|f| {
                 let ft = f.file_type.to_lowercase();
-                ft.contains("exe")
-                    || ft.contains("bat")
-                    || ft.contains("script")
-                    || ft.contains("dll")
+                SUSPICIOUS_TYPES.iter().any(|ext| ft == *ext)
             })
             .collect();
 

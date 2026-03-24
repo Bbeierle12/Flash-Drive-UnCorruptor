@@ -81,6 +81,7 @@ fn detect_composite_device(fp: &UsbFingerprint) -> Vec<Finding> {
 /// Descriptor length anomalies → Medium.
 ///
 /// If raw descriptors are available, check for obviously wrong lengths.
+/// Collects ALL anomalies instead of stopping at the first one.
 fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
     let mut findings = Vec::new();
 
@@ -96,9 +97,10 @@ fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
                         Severity::Medium,
                         "Truncated USB descriptor",
                         format!(
-                            "Descriptor chain ends at offset {} with only 1 byte remaining. \
+                            "Descriptor chain ends at offset {} with only {} byte(s) remaining. \
                              This may indicate corrupted or maliciously crafted descriptors.",
                             offset,
+                            data.len() - offset,
                         ),
                     )
                     .with_evidence(Evidence::Bytes {
@@ -127,6 +129,29 @@ fn detect_descriptor_anomalies(fp: &UsbFingerprint) -> Vec<Finding> {
                         offset: offset as u64,
                         data: data[offset..data.len().min(offset + 4)].to_vec(),
                         label: "Descriptor header".into(),
+                    }),
+                );
+                // Cannot advance — break to avoid infinite loop on length=0
+                break;
+            }
+
+            // Guard against reading past the buffer
+            if offset + desc_len > data.len() {
+                findings.push(
+                    Finding::new(
+                        "usb.descriptor_truncated",
+                        Severity::Medium,
+                        "Truncated USB descriptor",
+                        format!(
+                            "Descriptor at offset {} claims length {} but only {} bytes remain. \
+                             This may indicate corrupted or maliciously crafted descriptors.",
+                            offset, desc_len, data.len() - offset,
+                        ),
+                    )
+                    .with_evidence(Evidence::Bytes {
+                        offset: offset as u64,
+                        data: data[offset..].to_vec(),
+                        label: "Remaining bytes".into(),
                     }),
                 );
                 break;

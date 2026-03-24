@@ -223,10 +223,11 @@ mod tests {
 
         let device = MockDevice::new(1024 * 1024);
         let report = engine.scan(&device, None).unwrap();
-        // Clean device should have no high-severity findings
+        // Clean device should not have high-severity or above findings
         assert!(
-            report.findings.iter().all(|f| f.severity < fdu_models::Severity::High),
-            "Clean device should not have high-severity findings"
+            report.findings.iter().all(|f| f.severity <= fdu_models::Severity::Medium),
+            "Clean device should not have high-severity findings, got: {:?}",
+            report.findings.iter().map(|f| (&f.title, f.severity)).collect::<Vec<_>>()
         );
     }
 

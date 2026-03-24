@@ -48,24 +48,26 @@ fn phase7_version_shows_version() {
 
 #[test]
 fn phase7_list_shows_platform_output() {
-    // On Windows, list should either show an error about unsupported platform
-    // or show "no removable devices" — either way it shouldn't crash
+    // `list` should either succeed and show device information, or fail
+    // gracefully with a platform/permission error.  It must never crash.
     let result = fdu().arg("list").assert();
-    // The command should complete (either success or graceful error)
-    // On Windows: "Platform not supported" error from device enumeration
-    // We just check it doesn't panic
     let output = result.get_output();
     let combined = String::from_utf8_lossy(&output.stdout).to_string()
         + &String::from_utf8_lossy(&output.stderr);
+    // Must produce *some* recognizable output — the previous fallback
+    // (`!combined.is_empty()`) made this test vacuously pass.
     assert!(
         combined.contains("Platform")
             || combined.contains("platform")
             || combined.contains("No removable")
             || combined.contains("no removable")
             || combined.contains("Device")
+            || combined.contains("device")
             || combined.contains("Error")
-            || !combined.is_empty(), // fallback — at least it produced output
-        "unexpected list output: {}",
+            || combined.contains("error")
+            || combined.contains("Permission")
+            || combined.contains("permission"),
+        "list command produced unrecognised output: {}",
         combined
     );
 }

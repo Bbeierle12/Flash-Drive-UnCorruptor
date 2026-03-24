@@ -11,6 +11,33 @@ use fdu_models::{Evidence, Finding, Severity};
 
 pub struct FsIntegrityDetector;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AuditConfig;
+    use fdu_core::device::MockDevice;
+
+    #[test]
+    fn phase_is_filesystem() {
+        assert_eq!(FsIntegrityDetector.phase(), Phase::Filesystem);
+    }
+
+    #[test]
+    fn unknown_fs_returns_empty() {
+        let dev = MockDevice::new(1024 * 1024);
+        let cfg = AuditConfig::default();
+        let ctx = ScanContext {
+            device: &dev,
+            usb_fingerprint: None,
+            disk_layout: None,
+            fs_metadata: None,
+            config: &cfg,
+        };
+        let findings = FsIntegrityDetector.detect(&ctx).unwrap();
+        assert!(findings.is_empty());
+    }
+}
+
 impl Detector for FsIntegrityDetector {
     fn name(&self) -> &str {
         "Filesystem Integrity Detector"

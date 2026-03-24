@@ -105,7 +105,7 @@ fn open_device(_path: &str) -> anyhow::Result<Box<dyn Device>> {
         if _path.starts_with("/dev/") {
             Ok(Box::new(LinuxDevice::open(_path, false)?))
         } else {
-            Ok(Box::new(LinuxDevice::open_image(path)?))
+            Ok(Box::new(LinuxDevice::open_image(_path)?))
         }
     }
 

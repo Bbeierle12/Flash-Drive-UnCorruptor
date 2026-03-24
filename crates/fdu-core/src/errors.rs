@@ -45,6 +45,9 @@ pub enum Error {
     #[error("Operation not yet implemented: {0}")]
     Unimplemented(String),
 
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("Invalid path: {0}")]
     InvalidPath(PathBuf),
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Flash Drive UnCorruptor
+GenericName=USB Security Toolkit
+Comment=USB security audit, diagnostics, and file recovery
+Exec=fdu-tui
+Icon=fdu
+Terminal=true
+Categories=System;Security;Utility;
+Keywords=usb;flash;drive;recovery;security;audit;forensics;
+StartupNotify=false

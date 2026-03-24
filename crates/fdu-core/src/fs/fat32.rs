@@ -6,6 +6,7 @@
 use crate::device::traits::{Device, DeviceExt};
 use crate::errors::{Error, Result};
 use crate::models::*;
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -114,18 +115,21 @@ impl<'a> Fat32Fs<'a> {
     }
 
     /// Follow a cluster chain starting from `start_cluster`.
+    ///
+    /// Uses a HashSet for O(1) cycle detection instead of iterating up to
+    /// `max_clusters` times before discovering a loop.
     fn follow_chain(&self, start_cluster: u32) -> Result<Vec<u32>> {
         let mut chain = Vec::new();
+        let mut visited = HashSet::new();
         let mut current = start_cluster;
-        let max_clusters = self.total_data_clusters();
 
         loop {
             if !(2..0x0FFF_FFF8).contains(&current) {
                 break;
             }
-            if chain.len() as u64 > max_clusters {
+            if !visited.insert(current) {
                 return Err(Error::FilesystemCorrupted(
-                    "Circular cluster chain detected".into(),
+                    format!("Circular cluster chain detected at cluster {}", current),
                 ));
             }
             chain.push(current);
@@ -144,6 +148,63 @@ impl<'a> Fat32Fs<'a> {
         data_sectors / bpb.sectors_per_cluster as u64
     }
 
+    /// Resolve a path to its starting cluster by walking the directory tree.
+    ///
+    /// `/` and empty paths resolve to the root cluster. Subdirectories are
+    /// resolved component-by-component.
+    fn resolve_dir_cluster(&self, path: &Path) -> Result<u32> {
+        // Root directory
+        if path == Path::new("/") || path == Path::new("") {
+            return Ok(self.bpb.root_cluster);
+        }
+
+        let mut current_cluster = self.bpb.root_cluster;
+
+        for component in path.components() {
+            use std::path::Component;
+            match component {
+                Component::RootDir | Component::CurDir => continue,
+                Component::ParentDir => {
+                    // ".." navigation not supported — would need parent tracking
+                    return Err(Error::Unimplemented(
+                        "Parent directory navigation (..) not supported".into(),
+                    ));
+                }
+                Component::Normal(name) => {
+                    let target_name = name.to_string_lossy();
+                    let entries = self.read_dir_entries(current_cluster)?;
+
+                    let found = entries.iter().find(|e| {
+                        !e.is_deleted
+                            && e.is_dir
+                            && (e.display_name().eq_ignore_ascii_case(&target_name))
+                    });
+
+                    match found {
+                        Some(dir_entry) => {
+                            if dir_entry.first_cluster < 2 {
+                                return Err(Error::FilesystemCorrupted(format!(
+                                    "Directory '{}' has invalid cluster {}",
+                                    target_name, dir_entry.first_cluster
+                                )));
+                            }
+                            current_cluster = dir_entry.first_cluster;
+                        }
+                        None => {
+                            return Err(Error::NotFound(format!(
+                                "Directory '{}' not found",
+                                target_name
+                            )));
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(current_cluster)
+    }
+
     /// Read directory entries from a cluster chain.
     fn read_dir_entries(&self, start_cluster: u32) -> Result<Vec<Fat32DirEntry>> {
         let chain = self.follow_chain(start_cluster)?;
@@ -157,7 +218,7 @@ impl<'a> Fat32Fs<'a> {
             let offset = self.cluster_offset(cluster);
             let data = self.device.read_exact_at(offset, cluster_size)?;
 
-            for i in (0..data.len()).step_by(32) {
+            for i in (0..data.len().saturating_sub(31)).step_by(32) {
                 let entry = &data[i..i + 32];
 
                 // End of directory
@@ -380,13 +441,15 @@ impl<'a> crate::fs::traits::FileSystemOps for Fat32Fs<'a> {
             bpb.sectors_per_cluster as u32 * bpb.bytes_per_sector as u32;
         let total_bytes = total_clusters * cluster_size as u64;
 
-        // Count free clusters by scanning FAT
+        // Count free clusters by scanning FAT.
+        // Cluster numbers are u32 in FAT32; cap to avoid overflow.
+        let last_cluster = (total_clusters + 1).min(u32::MAX as u64) as u32;
         let mut free_clusters = 0u64;
-        for cluster in 2..=(total_clusters as u32 + 1) {
+        for cluster in 2..=last_cluster {
             match self.read_fat_entry(cluster) {
                 Ok(0) => free_clusters += 1,
                 Ok(_) => {}
-                Err(_) => break, // Stop on read error
+                Err(_) => continue, // Skip unreadable FAT entries, keep scanning
             }
         }
 
@@ -408,15 +471,8 @@ impl<'a> crate::fs::traits::FileSystemOps for Fat32Fs<'a> {
     }
 
     fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        // For root directory, use root_cluster
-        let start_cluster = if path == Path::new("/") || path == Path::new("") {
-            self.bpb.root_cluster
-        } else {
-            // TODO: Navigate directory hierarchy for subdirectories
-            return Err(Error::Unimplemented(
-                "Subdirectory navigation not yet implemented".into(),
-            ));
-        };
+        // Resolve the starting cluster for this path by walking the directory tree
+        let start_cluster = self.resolve_dir_cluster(path)?;
 
         let raw_entries = self.read_dir_entries(start_cluster)?;
 
@@ -1498,14 +1554,14 @@ mod tests {
     }
 
     #[test]
-    fn phase3_list_dir_subdirectory_unimplemented() {
+    fn phase3_list_dir_subdirectory_not_found() {
         let cfg = TestFat32Config::default();
         let dev = make_test_device(&cfg);
         let fs = Fat32Fs::new(&dev).unwrap();
         let result = fs.list_dir(Path::new("/subdir"));
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, Error::Unimplemented(_)));
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     // ── scan_deleted() ─────────────────────────────────────────────

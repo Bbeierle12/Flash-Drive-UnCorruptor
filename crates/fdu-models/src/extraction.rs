@@ -164,14 +164,28 @@ mod tests {
 
     #[test]
     fn serialization_roundtrip() {
+        let mut hashes = HashMap::new();
+        hashes.insert(PathBuf::from("/out/file.txt"), "abc123".to_string());
         let manifest = ExtractionManifest {
-            files: vec![],
+            files: vec![ExtractedFile {
+                original_path: "/file.txt".into(),
+                quarantine_path: PathBuf::from("/tmp/q/file.txt"),
+                sha256: "abc123".into(),
+                size_bytes: 42,
+                threat_level: Severity::Info,
+                findings: vec![],
+            }],
             quarantine_path: PathBuf::from("/tmp/q"),
             policy: ExtractionPolicy::VerifiedOnly,
-            integrity_hashes: HashMap::new(),
+            integrity_hashes: hashes,
         };
         let json = serde_json::to_string(&manifest).unwrap();
         let m2: ExtractionManifest = serde_json::from_str(&json).unwrap();
-        assert_eq!(m2.policy, ExtractionPolicy::VerifiedOnly);
+        assert_eq!(m2.policy, manifest.policy);
+        assert_eq!(m2.quarantine_path, manifest.quarantine_path);
+        assert_eq!(m2.files.len(), manifest.files.len());
+        assert_eq!(m2.files[0].sha256, manifest.files[0].sha256);
+        assert_eq!(m2.files[0].size_bytes, manifest.files[0].size_bytes);
+        assert_eq!(m2.integrity_hashes.len(), manifest.integrity_hashes.len());
     }
 }
