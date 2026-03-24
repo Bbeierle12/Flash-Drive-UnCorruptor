@@ -5,8 +5,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Enumerate removable block devices on Linux by reading sysfs.
+/// Enumerate ALL block devices on Linux by reading sysfs (removable and non-removable).
+/// Includes NVMe, SATA, SAS, eMMC, SD cards, virtual disks — everything.
+pub fn enumerate_all() -> Result<Vec<EnumeratedDevice>, EnumError> {
+    enumerate_inner(false)
+}
+
+/// Enumerate removable block devices only (USB, SD cards).
 pub fn enumerate() -> Result<Vec<EnumeratedDevice>, EnumError> {
+    enumerate_inner(true)
+}
+
+/// Inner implementation: if `removable_only` is true, only return removable devices.
+fn enumerate_inner(removable_only: bool) -> Result<Vec<EnumeratedDevice>, EnumError> {
     let mut devices = Vec::new();
     let mut mount_points = read_mount_points()?;
 
@@ -35,6 +46,11 @@ pub fn enumerate() -> Result<Vec<EnumeratedDevice>, EnumError> {
         let is_removable = read_sysfs_value(&dev_path.join("removable"))
             .map(|v| v.trim() == "1")
             .unwrap_or(false);
+
+        // If only listing removable devices, skip non-removable ones
+        if removable_only && !is_removable {
+            continue;
+        }
 
         // sysfs "size" is always in 512-byte units regardless of actual
         // hardware sector size.

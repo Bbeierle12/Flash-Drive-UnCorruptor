@@ -6,7 +6,7 @@
 use crate::device::traits::{Device, DeviceExt};
 use crate::errors::{Error, Result};
 use crate::models::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -328,6 +328,120 @@ impl<'a> Fat32Fs<'a> {
                 ),
                 repairable: false,
             });
+        }
+
+        // Detect cross-linked clusters: scan all FAT entries and track which
+        // clusters are pointed to by more than one predecessor.
+        // Skip if BPB is invalid (avoids panics with corrupt sector sizes).
+        let bpb_valid = matches!(
+            self.bpb.bytes_per_sector,
+            512 | 1024 | 2048 | 4096
+        );
+        if bpb_valid {
+            let last_cluster = (total_clusters + 1).min(u32::MAX as u64) as u32;
+            let mut target_to_sources: HashMap<u32, Vec<u32>> = HashMap::new();
+            for cluster in 2..=last_cluster {
+                match self.read_fat_entry(cluster) {
+                    Ok(next) if (2..0x0FFF_FFF8).contains(&next) => {
+                        target_to_sources
+                            .entry(next)
+                            .or_default()
+                            .push(cluster);
+                    }
+                    _ => {}
+                }
+            }
+            let cross_links: Vec<_> = target_to_sources
+                .iter()
+                .filter(|(_, sources)| sources.len() > 1)
+                .collect();
+            for (target, sources) in &cross_links {
+                issues.push(FsIssue {
+                    severity: Severity::Error,
+                    code: "FAT_CROSS_LINK".into(),
+                    message: format!(
+                        "Cluster {} is pointed to by {} different clusters: {:?}",
+                        target,
+                        sources.len(),
+                        sources,
+                    ),
+                    repairable: true,
+                });
+            }
+        }
+
+        // Validate FSInfo sector (typically sector 1 for FAT32).
+        // FSInfo contains cached free cluster count and next-free hint.
+        if bpb_valid {
+            let fsinfo_offset = 1u64 * self.bpb.bytes_per_sector as u64;
+            if let Ok(fsinfo) = self.device.read_exact_at(fsinfo_offset, 512) {
+                // Check FSInfo signatures
+                let lead_sig = u32::from_le_bytes([fsinfo[0], fsinfo[1], fsinfo[2], fsinfo[3]]);
+                let struc_sig =
+                    u32::from_le_bytes([fsinfo[484], fsinfo[485], fsinfo[486], fsinfo[487]]);
+                let trail_sig =
+                    u32::from_le_bytes([fsinfo[508], fsinfo[509], fsinfo[510], fsinfo[511]]);
+
+                if lead_sig != 0x41615252 {
+                    issues.push(FsIssue {
+                        severity: Severity::Warning,
+                        code: "FSINFO_LEAD_SIG".into(),
+                        message: format!(
+                            "FSInfo lead signature invalid: {:#010x} (expected 0x41615252)",
+                            lead_sig
+                        ),
+                        repairable: true,
+                    });
+                }
+                if struc_sig != 0x61417272 {
+                    issues.push(FsIssue {
+                        severity: Severity::Warning,
+                        code: "FSINFO_STRUC_SIG".into(),
+                        message: format!(
+                            "FSInfo struct signature invalid: {:#010x} (expected 0x61417272)",
+                            struc_sig
+                        ),
+                        repairable: true,
+                    });
+                }
+                if trail_sig != 0xAA550000 {
+                    issues.push(FsIssue {
+                        severity: Severity::Warning,
+                        code: "FSINFO_TRAIL_SIG".into(),
+                        message: format!(
+                            "FSInfo trail signature invalid: {:#010x} (expected 0xAA550000)",
+                            trail_sig
+                        ),
+                        repairable: true,
+                    });
+                }
+
+                // Check free cluster count against actual
+                let fsinfo_free = u32::from_le_bytes([
+                    fsinfo[488], fsinfo[489], fsinfo[490], fsinfo[491],
+                ]);
+                if fsinfo_free != 0xFFFFFFFF {
+                    // 0xFFFFFFFF means "unknown" — only check if it claims to know
+                    let last_cl = (total_clusters + 1).min(u32::MAX as u64) as u32;
+                    let mut actual_free = 0u32;
+                    for c in 2..=last_cl {
+                        if let Ok(0) = self.read_fat_entry(c) {
+                            actual_free += 1;
+                        }
+                    }
+                    if fsinfo_free != actual_free {
+                        issues.push(FsIssue {
+                            severity: Severity::Warning,
+                            code: "FSINFO_FREE_MISMATCH".into(),
+                            message: format!(
+                                "FSInfo reports {} free clusters but FAT scan found {}",
+                                fsinfo_free, actual_free,
+                            ),
+                            repairable: true,
+                        });
+                    }
+                }
+            }
         }
 
         issues

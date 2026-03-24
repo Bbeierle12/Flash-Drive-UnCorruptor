@@ -1,7 +1,7 @@
-//! Cross-platform removable device enumeration.
+//! Cross-platform storage device enumeration.
 //!
-//! Discovers USB flash drives, SD cards, and other removable storage
-//! connected to the system.
+//! Discovers all block devices: USB flash drives, NVMe SSDs, SATA drives,
+//! SD cards, eMMC, virtual disks, and other storage connected to the system.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -37,10 +37,25 @@ fn default_sector_size() -> u32 {
     512
 }
 
-/// Enumerate all removable storage devices on the system.
+/// Enumerate removable storage devices on the system (USB, SD cards).
 pub fn enumerate_devices() -> Result<Vec<EnumeratedDevice>, EnumError> {
     #[cfg(target_os = "linux")]
     return linux::enumerate();
+
+    #[cfg(not(target_os = "linux"))]
+    return Err(EnumError::UnsupportedPlatform(
+        std::env::consts::OS.to_string(),
+    ));
+}
+
+/// Enumerate ALL block devices on the system, including non-removable
+/// drives (NVMe, SATA, SAS, eMMC, virtual disks, etc.).
+///
+/// Use this for full-system diagnostics and corruption detection on any
+/// storage medium, not just flash drives.
+pub fn enumerate_all_devices() -> Result<Vec<EnumeratedDevice>, EnumError> {
+    #[cfg(target_os = "linux")]
+    return linux::enumerate_all();
 
     #[cfg(not(target_os = "linux"))]
     return Err(EnumError::UnsupportedPlatform(
