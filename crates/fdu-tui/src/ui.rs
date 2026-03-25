@@ -69,6 +69,8 @@ fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Devices => views::devices::draw(frame, app, area),
         Screen::Scan => views::scan::draw(frame, app, area),
         Screen::Repair => views::repair::draw(frame, app, area),
+        Screen::Diagnose => views::diagnose::draw(frame, app, area),
+        Screen::Audit => views::audit::draw(frame, app, area),
         Screen::Partitions => views::partitions::draw(frame, app, area),
         Screen::Usb => views::usb::draw(frame, app, area),
         Screen::Recover => views::recover::draw(frame, app, area),
@@ -85,12 +87,12 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let bar = Paragraph::new(Line::from(vec![
         Span::styled(" q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
         Span::raw(" Quit/Back  "),
-        Span::styled("0-7", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled("0-9", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" Navigate  "),
-        Span::styled("Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(" Next  "),
+        Span::styled("↑↓/jk", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" Scroll  "),
         Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::raw(" Run  |  "),
+        Span::raw(" Select/Run  │  "),
         Span::styled(device_text, Style::default().fg(Color::White)),
     ]))
     .style(Style::default().bg(Color::DarkGray));

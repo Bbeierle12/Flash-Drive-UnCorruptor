@@ -33,6 +33,8 @@ pub enum Screen {
     Devices,
     Scan,
     Repair,
+    Diagnose,
+    Audit,
     Partitions,
     Usb,
     Recover,
@@ -45,6 +47,8 @@ impl Screen {
         Screen::Devices,
         Screen::Scan,
         Screen::Repair,
+        Screen::Diagnose,
+        Screen::Audit,
         Screen::Partitions,
         Screen::Usb,
         Screen::Recover,
@@ -57,6 +61,8 @@ impl Screen {
             Screen::Devices => "Devices",
             Screen::Scan => "Scan",
             Screen::Repair => "Repair",
+            Screen::Diagnose => "Diagnose",
+            Screen::Audit => "Audit",
             Screen::Partitions => "Partitions",
             Screen::Usb => "USB",
             Screen::Recover => "Recover",
@@ -70,10 +76,12 @@ impl Screen {
             Screen::Devices => '1',
             Screen::Scan => '2',
             Screen::Repair => '3',
-            Screen::Partitions => '4',
-            Screen::Usb => '5',
-            Screen::Recover => '6',
-            Screen::Extract => '7',
+            Screen::Diagnose => '4',
+            Screen::Audit => '5',
+            Screen::Partitions => '6',
+            Screen::Usb => '7',
+            Screen::Recover => '8',
+            Screen::Extract => '9',
         }
     }
 }
@@ -84,9 +92,10 @@ use fdu_device_enum::EnumeratedDevice;
 
 // ── Per-screen state holders ────────────────────────────────────────
 
-use fdu_core::models::RecoverableFile;
+use fdu_core::models::{DiagnosticReport, RecoverableFile, ValidationReport};
 use fdu_disk::layout::DiskLayout;
 use fdu_models::extraction::ExtractionManifest;
+use fdu_models::threat::ThreatReport;
 use fdu_models::usb::UsbFingerprint;
 
 /// Holds the result of an operation that can be idle, running, done, or failed.
@@ -117,11 +126,17 @@ pub struct App {
     // Selected device path (set by the user from Devices screen)
     pub selected_device: Option<String>,
 
-    // Scan (unified: filesystem + hardware diagnostics + security audit)
-    pub scan_result: OpState<String>,
+    // Scan
+    pub scan_result: OpState<ValidationReport>,
 
     // Repair
     pub repair_result: OpState<String>,
+
+    // Diagnose
+    pub diagnose_result: OpState<DiagnosticReport>,
+
+    // Audit
+    pub audit_result: OpState<ThreatReport>,
 
     // Partitions
     pub partitions_result: OpState<DiskLayout>,
@@ -137,7 +152,7 @@ pub struct App {
     pub extract_output_dir: String,
     pub extract_result: OpState<ExtractionManifest>,
 
-    // Scrollable finding list index (shared by usb)
+    // Scrollable finding list index (shared by audit/usb)
     pub finding_index: usize,
 }
 
@@ -151,6 +166,8 @@ impl App {
             selected_device: None,
             scan_result: OpState::Idle,
             repair_result: OpState::Idle,
+            diagnose_result: OpState::Idle,
+            audit_result: OpState::Idle,
             partitions_result: OpState::Idle,
             usb_devices: OpState::Idle,
             usb_list_index: 0,
@@ -197,17 +214,29 @@ impl App {
             return;
         }
 
-        // Global: Tab / BackTab / Arrow keys cycle through screens
+        // Global: Tab / BackTab cycle through screens
         match key.code {
-            KeyCode::Tab | KeyCode::Right => {
+            KeyCode::Tab => {
                 let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
                 self.screen = Screen::ALL[(idx + 1) % Screen::ALL.len()];
                 self.finding_index = 0;
                 return;
             }
-            KeyCode::BackTab | KeyCode::Left => {
+            KeyCode::BackTab => {
                 let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
                 self.screen = Screen::ALL[(idx + Screen::ALL.len() - 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            KeyCode::Left => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + Screen::ALL.len() - 1) % Screen::ALL.len()];
+                self.finding_index = 0;
+                return;
+            }
+            KeyCode::Right => {
+                let idx = Screen::ALL.iter().position(|s| *s == self.screen).unwrap_or(0);
+                self.screen = Screen::ALL[(idx + 1) % Screen::ALL.len()];
                 self.finding_index = 0;
                 return;
             }
@@ -231,6 +260,8 @@ impl App {
             Screen::Devices => self.handle_devices_key(key),
             Screen::Scan => self.handle_scan_key(key),
             Screen::Repair => self.handle_repair_key(key),
+            Screen::Diagnose => self.handle_diagnose_key(key),
+            Screen::Audit => self.handle_audit_key(key),
             Screen::Partitions => self.handle_partitions_key(key),
             Screen::Usb => self.handle_usb_key(key),
             Screen::Recover => self.handle_recover_key(key),
@@ -270,8 +301,7 @@ impl App {
 
     fn handle_scan_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Enter | KeyCode::Char('s') => self.run_scan(false),
-            KeyCode::Char('d') => self.run_scan(true), // deep scan with bad sectors
+            KeyCode::Enter | KeyCode::Char('s') => self.run_scan(),
             _ => {}
         }
     }
@@ -279,6 +309,30 @@ impl App {
     fn handle_repair_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter | KeyCode::Char('r') => self.run_repair(),
+            _ => {}
+        }
+    }
+
+    fn handle_diagnose_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('d') => self.run_diagnose(),
+            _ => {}
+        }
+    }
+
+    fn handle_audit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('a') => self.run_audit(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.finding_index = self.finding_index.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let OpState::Done(ref report) = self.audit_result {
+                    if self.finding_index + 1 < report.findings.len() {
+                        self.finding_index += 1;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -321,10 +375,10 @@ impl App {
         }
     }
 
-    // ── Operations ──────────────────────────────────────────────────
+    // ── Operations (synchronous — all core APIs are sync) ───────────
 
     fn enumerate_devices(&mut self) {
-        self.devices = OpState::Running("Enumerating devices...".into());
+        self.devices = OpState::Running("Enumerating devices…".into());
         match fdu_device_enum::enumerate_devices() {
             Ok(devs) => {
                 self.device_list_index = 0;
@@ -362,7 +416,7 @@ impl App {
         }
     }
 
-    fn run_scan(&mut self, deep: bool) {
+    fn run_scan(&mut self) {
         let path = match &self.selected_device {
             Some(p) => p.clone(),
             None => {
@@ -377,36 +431,30 @@ impl App {
             .and_then(|p| p.parent().map(|d| d.join("fdu")))
             .unwrap_or_else(|| PathBuf::from("fdu"));
 
-        let deep_flag = if deep { " --deep" } else { "" };
-
         let terminal_cmd = find_terminal_emulator();
         let child = std::process::Command::new(&terminal_cmd)
             .args(terminal_exec_args(
                 &terminal_cmd,
                 &format!(
-                    "echo '=== Flash Drive UnCorruptor — Full Scan ===' && echo && \
-                     {} scan {}{}; \
-                     echo && echo 'Press Enter to close...' && read",
+                    "echo '=== Flash Drive UnCorruptor — Filesystem Scan ===' && echo && {} scan {}; echo && echo 'Press Enter to close...' && read",
                     shell_escape(&fdu_bin.to_string_lossy()),
                     shell_escape(&path),
-                    deep_flag,
                 ),
             ))
             .spawn();
 
-        let mode = if deep { "Deep scan" } else { "Scan" };
         match child {
             Ok(_) => {
                 self.scan_result = OpState::Running(format!(
-                    "{} running in external terminal for {}",
-                    mode, path
+                    "Scan running in external terminal for {}",
+                    path
                 ));
             }
             Err(e) => {
                 self.scan_result = OpState::Error(format!(
                     "Failed to open terminal (tried '{}'): {}. \
-                     Run manually: fdu scan {:?}{}",
-                    terminal_cmd, e, path, deep_flag
+                     Run manually: fdu scan {:?}",
+                    terminal_cmd, e, path
                 ));
             }
         }
@@ -462,8 +510,78 @@ impl App {
         }
     }
 
+    fn run_diagnose(&mut self) {
+        let path = match &self.selected_device {
+            Some(p) => p.clone(),
+            None => {
+                self.diagnose_result =
+                    OpState::Error("No device selected — go to Devices [1] and press Enter".into());
+                return;
+            }
+        };
+
+        // Resolve the fdu CLI binary path (same directory as fdu-tui).
+        let fdu_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("fdu")))
+            .unwrap_or_else(|| PathBuf::from("fdu"));
+
+        // Launch `fdu diagnose <device> --bad-sectors` in a new terminal window
+        // so the user gets a live progress bar without blocking the TUI.
+        let terminal_cmd = find_terminal_emulator();
+        let child = std::process::Command::new(&terminal_cmd)
+            .args(terminal_exec_args(
+                &terminal_cmd,
+                &format!(
+                    "echo '=== Flash Drive UnCorruptor — Diagnostics ===' && echo && {} diagnose {} --bad-sectors; echo && echo 'Press Enter to close...' && read",
+                    shell_escape(&fdu_bin.to_string_lossy()),
+                    shell_escape(&path),
+                ),
+            ))
+            .spawn();
+
+        match child {
+            Ok(_) => {
+                self.diagnose_result = OpState::Running(format!(
+                    "Diagnostics running in external terminal for {}",
+                    path
+                ));
+            }
+            Err(e) => {
+                self.diagnose_result = OpState::Error(format!(
+                    "Failed to open terminal (tried '{}'): {}. \
+                     Run manually: fdu diagnose {:?} --bad-sectors",
+                    terminal_cmd, e, path
+                ));
+            }
+        }
+    }
+
+    fn run_audit(&mut self) {
+        self.audit_result = OpState::Running("Running security audit…".into());
+        let device = match self.open_device() {
+            Ok(d) => d,
+            Err(e) => {
+                self.audit_result = OpState::Error(e);
+                return;
+            }
+        };
+
+        let config = fdu_audit::AuditConfig::default();
+        let mut engine = fdu_audit::AuditEngine::new(config);
+        engine.register_defaults();
+
+        match engine.scan(device.as_ref(), None) {
+            Ok(report) => {
+                self.finding_index = 0;
+                self.audit_result = OpState::Done(report);
+            }
+            Err(e) => self.audit_result = OpState::Error(format!("{e}")),
+        }
+    }
+
     fn run_partitions(&mut self) {
-        self.partitions_result = OpState::Running("Analyzing partitions...".into());
+        self.partitions_result = OpState::Running("Analyzing partitions…".into());
         let device = match self.open_device() {
             Ok(d) => d,
             Err(e) => {
@@ -479,7 +597,7 @@ impl App {
     }
 
     fn run_usb_enumerate(&mut self) {
-        self.usb_devices = OpState::Running("Scanning USB bus...".into());
+        self.usb_devices = OpState::Running("Scanning USB bus…".into());
         match fdu_usb::enumerate_usb_devices() {
             Ok(fps) => {
                 let with_findings: Vec<_> = fps
@@ -497,7 +615,7 @@ impl App {
     }
 
     fn run_recover(&mut self) {
-        self.recover_result = OpState::Running("Scanning for recoverable files...".into());
+        self.recover_result = OpState::Running("Scanning for recoverable files…".into());
         let device = match self.open_device() {
             Ok(d) => d,
             Err(e) => {
@@ -513,7 +631,7 @@ impl App {
     }
 
     fn run_extract(&mut self) {
-        self.extract_result = OpState::Running("Extracting files...".into());
+        self.extract_result = OpState::Running("Extracting files…".into());
         let device = match self.open_device() {
             Ok(d) => d,
             Err(e) => {
@@ -537,6 +655,7 @@ impl App {
 
 /// Find a terminal emulator available on the system.
 fn find_terminal_emulator() -> String {
+    // Check common terminal emulators in preference order
     let candidates = [
         "x-terminal-emulator", // Debian/Ubuntu default
         "gnome-terminal",
@@ -557,10 +676,12 @@ fn find_terminal_emulator() -> String {
         }
     }
 
+    // Fallback
     "xterm".to_string()
 }
 
 /// Build the correct exec arguments for the detected terminal emulator.
+/// Different terminals use different flags to run a command.
 fn terminal_exec_args(terminal: &str, command: &str) -> Vec<String> {
     let base = terminal.rsplit('/').next().unwrap_or(terminal);
     match base {

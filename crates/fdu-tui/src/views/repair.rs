@@ -73,7 +73,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
-                Line::from("  Press [2] Scan to verify the repair."),
+                Line::from("  Run [2] Scan to verify the repair."),
             ];
             frame.render_widget(Paragraph::new(lines).block(block), area);
         }

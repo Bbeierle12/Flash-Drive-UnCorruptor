@@ -104,27 +104,31 @@ fn draw_quick_actions(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  [2] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Scan       — Full scan (filesystem + hardware + security)"),
+            Span::raw("Scan      — Filesystem integrity check"),
         ]),
         Line::from(vec![
             Span::styled("  [3] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Repair     — Fix detected filesystem corruption"),
+            Span::raw("Diagnose  — Bad sectors & health score"),
         ]),
         Line::from(vec![
             Span::styled("  [4] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Partitions — MBR/GPT layout analysis"),
+            Span::raw("Audit     — Full security audit (5 phases)"),
         ]),
         Line::from(vec![
             Span::styled("  [5] ", Style::default().fg(Color::Yellow)),
-            Span::raw("USB        — USB device inspection & BadUSB detection"),
+            Span::raw("Partitions — MBR/GPT layout analysis"),
         ]),
         Line::from(vec![
             Span::styled("  [6] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Recover    — Scan for deleted/lost files"),
+            Span::raw("USB       — USB device inspection & BadUSB detection"),
         ]),
         Line::from(vec![
             Span::styled("  [7] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Extract    — Quarantine-based file extraction"),
+            Span::raw("Recover   — Scan for deleted/lost files"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [8] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Extract   — Quarantine-based file extraction"),
         ]),
         Line::from(""),
         Line::from(Span::styled(
