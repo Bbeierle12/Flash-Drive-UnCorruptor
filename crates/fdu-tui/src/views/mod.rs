@@ -1,7 +1,5 @@
-pub mod audit;
 pub mod dashboard;
 pub mod devices;
-pub mod diagnose;
 pub mod extract;
 pub mod partitions;
 pub mod recover;

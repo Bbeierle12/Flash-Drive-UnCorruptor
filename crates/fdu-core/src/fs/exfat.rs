@@ -75,6 +75,8 @@ impl ExFatBpb {
 pub struct ExFatFs<'a> {
     device: &'a dyn Device,
     bpb: ExFatBpb,
+    /// True if boot signature 0x55AA was missing during parse.
+    boot_sig_missing: bool,
 }
 
 impl<'a> ExFatFs<'a> {
@@ -89,12 +91,8 @@ impl<'a> ExFatFs<'a> {
             ));
         }
 
-        // Verify boot signature
-        if boot[510] != 0x55 || boot[511] != 0xAA {
-            return Err(Error::FilesystemCorrupted(
-                "Missing boot signature 0x55AA".into(),
-            ));
-        }
+        // Check boot signature — record but don't bail, so we can still scan
+        let boot_sig_missing = boot[510] != 0x55 || boot[511] != 0xAA;
 
         // Bytes 0-2 must be jump boot code (0xEB 0x76 0x90 is standard)
         // Bytes 11-63 must be zero ("MustBeZero" field)
@@ -154,7 +152,7 @@ impl<'a> ExFatFs<'a> {
 
         let _ = (zero_violation, volume_serial); // used in validate()
 
-        Ok(Self { device, bpb })
+        Ok(Self { device, bpb, boot_sig_missing })
     }
 
     /// Byte offset for a given cluster number (clusters start at 2).
@@ -202,6 +200,16 @@ impl<'a> ExFatFs<'a> {
     /// Validate boot region integrity.
     fn validate_boot(&self) -> Vec<FsIssue> {
         let mut issues = Vec::new();
+
+        // Check boot signature
+        if self.boot_sig_missing {
+            issues.push(FsIssue {
+                severity: Severity::Critical,
+                code: "EXFAT_BOOT_SIG_MISSING".into(),
+                message: "Boot signature 0x55AA is missing — boot sector is corrupted".into(),
+                repairable: true,
+            });
+        }
 
         // Check volume dirty flag
         if self.bpb.is_dirty() {

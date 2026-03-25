@@ -3,6 +3,7 @@
 use fdu_core::device::traits::Device;
 use fdu_core::fs::detect::detect_filesystem;
 use fdu_core::models::*;
+use fdu_core::repair::exfat::{self as exfat_repair, ExFatBpb};
 use fdu_core::repair::fat32::{self, Fat32Bpb};
 
 pub fn run(
@@ -39,9 +40,12 @@ pub fn run(
         FsType::Fat32 | FsType::Fat16 | FsType::Fat12 => {
             repair_fat(dev.as_mut(), device_path, fix_fat, remove_bad_chains, backup_first)?;
         }
+        FsType::ExFat => {
+            repair_exfat(dev.as_mut(), device_path, fix_fat, remove_bad_chains, backup_first)?;
+        }
         other => {
             anyhow::bail!(
-                "Repair for '{}' is not yet supported. Currently supported: FAT12/16/32.\n\
+                "Repair for '{}' is not yet supported. Currently supported: FAT12/16/32, exFAT.\n\
                  ext2/3/4 and NTFS repair is planned.",
                 other
             );
@@ -101,6 +105,53 @@ fn repair_fat(
     println!();
     println!("Done. Run 'fdu scan {}' to verify the repair.", device_path);
 
+    Ok(())
+}
+
+fn repair_exfat(
+    dev: &mut dyn Device,
+    device_path: &str,
+    fix_fat: bool,
+    remove_bad_chains: bool,
+    backup_first: bool,
+) -> anyhow::Result<()> {
+    let bpb = ExFatBpb::parse(dev)?;
+    println!("Parsed exFAT: {} bytes/sector, {} FAT(s), {} clusters",
+        bpb.bytes_per_sector(), bpb.number_of_fats, bpb.cluster_count);
+    println!();
+
+    let (fix_fat, remove_bad_chains) = if !fix_fat && !remove_bad_chains {
+        println!("No specific repair flags given — running all repairs.");
+        (true, true)
+    } else {
+        (fix_fat, remove_bad_chains)
+    };
+
+    let options = RepairOptions {
+        confirm_unsafe: true,
+        backup_first,
+        fix_fat,
+        remove_bad_chains,
+    };
+
+    println!("Running exFAT repairs...");
+    println!();
+
+    let report = exfat_repair::run_all_repairs(dev, &bpb, &options)?;
+
+    if report.fixes_applied.is_empty() {
+        println!("No repairs needed — filesystem appears clean.");
+    } else {
+        println!("=== Repair Report ===");
+        for (i, fix) in report.fixes_applied.iter().enumerate() {
+            println!("  [{}] {}", i + 1, fix);
+        }
+        println!();
+        println!("Total fixes applied: {}", report.errors_fixed);
+    }
+
+    println!();
+    println!("Done. Run 'fdu scan {}' to verify the repair.", device_path);
     Ok(())
 }
 

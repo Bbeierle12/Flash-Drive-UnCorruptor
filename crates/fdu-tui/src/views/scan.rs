@@ -1,118 +1,91 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 
 use crate::app::{App, OpState};
-use crate::ui::fmt_bytes;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Filesystem Scan — [s/Enter] run ");
+        .title(" Scan — [s/Enter] run, [d] deep scan (includes bad sectors) ");
 
     match &app.scan_result {
         OpState::Idle => {
             let hint = if app.selected_device.is_some() {
-                "Press [s] or Enter to scan the selected device."
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Full device scan — filesystem, hardware, and security in one pass.",
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from("  Phase 1: Filesystem Validation"),
+                    Line::from("    Boot sector, FAT integrity, cluster chains, dirty flags,"),
+                    Line::from("    backup sector comparison, cross-links, orphan chains"),
+                    Line::from(""),
+                    Line::from("  Phase 2: Hardware Diagnostics"),
+                    Line::from("    Entropy analysis, debug signature detection,"),
+                    Line::from("    fake flash / counterfeit capacity detection"),
+                    Line::from(""),
+                    Line::from("  Phase 3: Security Audit"),
+                    Line::from("    Malware signatures, autorun scripts, BadUSB indicators,"),
+                    Line::from("    suspicious deleted files, content analysis"),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(
+                            "  [s/Enter]",
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" Quick scan   "),
+                        Span::styled(
+                            "[d]",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" Deep scan (adds bad sector test — slower)"),
+                    ]),
+                ]
             } else {
-                "No device selected. Go to [1] Devices first."
+                vec![
+                    Line::from(""),
+                    Line::from("  No device selected. Go to [1] Devices and select one first."),
+                ]
             };
             frame.render_widget(Paragraph::new(hint).block(block), area);
         }
         OpState::Running(msg) => {
-            let p = Paragraph::new(format!("⏳ {msg}"))
+            let lines = vec![
+                Line::from(""),
+                Line::from(format!("  ... {msg}")),
+                Line::from(""),
+                Line::from("  Check the external terminal window for live progress."),
+                Line::from("  Press [s] to launch again if the window was closed."),
+            ];
+            let p = Paragraph::new(lines)
                 .style(Style::default().fg(Color::Yellow))
                 .block(block);
             frame.render_widget(p, area);
         }
         OpState::Error(e) => {
-            let p = Paragraph::new(format!("✗ {e}"))
+            let p = Paragraph::new(format!("  Error: {e}"))
                 .style(Style::default().fg(Color::Red))
                 .block(block);
             frame.render_widget(p, area);
         }
-        OpState::Done(report) => {
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints([
-                    Constraint::Length(6),
-                    Constraint::Min(0),
-                ])
-                .split(inner);
-
-            // Summary
-            let healthy_icon = if report.is_healthy() { "✓ Healthy" } else { "✗ Issues found" };
-            let healthy_style = if report.is_healthy() {
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-            };
-
-            let summary = vec![
-                Line::from(vec![
-                    Span::raw("  Status: "),
-                    Span::styled(healthy_icon, healthy_style),
-                ]),
-                Line::from(format!("  Filesystem: {:?}", report.fs_type)),
-                Line::from(format!(
-                    "  Size: {} (used: {}, free: {})",
-                    fmt_bytes(report.metadata.total_bytes),
-                    fmt_bytes(report.metadata.used_bytes),
-                    fmt_bytes(report.metadata.free_bytes),
+        OpState::Done(msg) => {
+            let lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!("  {msg}"),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
                 )),
-                Line::from(format!(
-                    "  Clusters: {} (size: {} B)",
-                    report.metadata.total_clusters, report.metadata.cluster_size
-                )),
-                Line::from(format!("  Scan time: {} ms", report.scan_duration_ms)),
+                Line::from(""),
+                Line::from("  Press [s] to scan again, or [3] Repair to fix issues."),
             ];
-            frame.render_widget(Paragraph::new(summary), chunks[0]);
-
-            // Issues
-            if report.issues.is_empty() {
-                frame.render_widget(
-                    Paragraph::new("  No issues found.")
-                        .style(Style::default().fg(Color::Green)),
-                    chunks[1],
-                );
-            } else {
-                let lines: Vec<Line> = report
-                    .issues
-                    .iter()
-                    .map(|issue| {
-                        let sev_color = match issue.severity {
-                            fdu_core::models::Severity::Info => Color::Blue,
-                            fdu_core::models::Severity::Warning => Color::Yellow,
-                            fdu_core::models::Severity::Error => Color::Red,
-                            fdu_core::models::Severity::Critical => Color::Red,
-                        };
-                        let repairable = if issue.repairable { " [repairable]" } else { "" };
-                        Line::from(vec![
-                            Span::styled(
-                                format!("  [{:?}] ", issue.severity),
-                                Style::default().fg(sev_color),
-                            ),
-                            Span::raw(format!("{}: {}", issue.code, issue.message)),
-                            Span::styled(repairable, Style::default().fg(Color::DarkGray)),
-                        ])
-                    })
-                    .collect();
-                let title = format!(
-                    " Issues: {} errors, {} warnings ",
-                    report.error_count(),
-                    report.warning_count()
-                );
-                let issues_block = Block::default().borders(Borders::TOP).title(title);
-                frame.render_widget(Paragraph::new(lines).block(issues_block), chunks[1]);
-            }
+            frame.render_widget(Paragraph::new(lines).block(block), area);
         }
     }
 }
